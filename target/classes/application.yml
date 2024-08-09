@@ -1,0 +1,43 @@
+
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/samyx_prod?allowPublicKeyRetrieval=true&useSSL=false&useJDBCCompliantTimezoneShift=true&useLegacyDatetimeCode=false&serverTimezone=America/Costa_Rica
+    username: sammy
+    password: _NHrX37=%#wV
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: fe@samyx.digital
+    password: facturas@samyx@1018
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+      mail.smtp.starttls.required: true
+  jmx:
+    default-domain: MensajeReceptorInbox Javier
+
+correo:
+  de:
+    distribucion: fe@samyx.digital
+  no:
+    reply: fe@samyx.digital
+
+path:
+  upload:
+    files:
+      api: /home/XmlClientes/
+
+api:
+  host: smtp.gmail.com
+  userName: restaurantevistaalmar07@gmail.com
+  password: skym esbk vgab wkzx
+
+server:
+  servlet:
+    session:
+      timeout: 720m
+      cookie:
+        max-age: 720m
