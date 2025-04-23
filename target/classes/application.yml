@@ -2,11 +2,17 @@
 spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/samyx_prod?allowPublicKeyRetrieval=true&useSSL=false&useJDBCCompliantTimezoneShift=true&useLegacyDatetimeCode=false&serverTimezone=America/Costa_Rica
-    username: sammy
-    password: _NHrX37=%#wV
+    url: jdbc:mysql://simple-studio-do-user-17834356-0.g.db.ondigitalocean.com:25060/samyx_dev?ssl-mode=REQUIRED
+    username: doadmin
+    password: AVNS_d_4ApkE_ZCXMb-niHbt
+
   jpa:
+    hibernate:
+      ddl-auto: update
+
     database-platform: org.hibernate.dialect.MySQLDialect
+
+  ##enviar respuesta
   mail:
     host: smtp.gmail.com
     port: 587

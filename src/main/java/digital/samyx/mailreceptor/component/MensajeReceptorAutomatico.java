@@ -1,6 +1,8 @@
 package digital.samyx.mailreceptor.component;
 
+import digital.samyx.mailreceptor.entity.EmisorSMTP;
 import digital.samyx.mailreceptor.entity.FEMensajeReceptorAutomatico;
+import digital.samyx.mailreceptor.service.IEmisoresSMTPService;
 import digital.samyx.mailreceptor.service.IFEMensajeReceptorAutomaticoService;
 import digital.samyx.mailreceptor.util.UnzipFiles;
 import digital.samyx.mailreceptor.util.XmlHelper;
@@ -32,9 +34,7 @@ import java.io.UnsupportedEncodingException;
 import java.sql.SQLException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Enumeration;
-import java.util.Properties;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
@@ -51,24 +51,31 @@ public class MensajeReceptorAutomatico {
     @Autowired
     public JavaMailSender emailSender;
 
+    @Autowired
+    private IEmisoresSMTPService emisoresSMTPService;
+
+
     @Value("${correo.de.distribucion}")
     private String correoDistribucion;
 
     @Value("${api.host}")
     private String apiHost;
 
-    @Value("${api.userName}")
-    private String apiUserName;
-
-    @Value("${api.password}")
-    private String apiPassword;
-
     private final Logger log = LoggerFactory.getLogger(getClass());
 
     private ZipFile zipFile;
-
+@Autowired
+private IEmisoresSMTPService emisorSMTPService;
     @Scheduled(fixedDelay = 60000L)
-    public void downloadEmailAttachments() throws ParserConfigurationException, SAXException, SQLException, ParseException {
+    public void probar() throws SQLException, ParserConfigurationException, ParseException, SAXException {
+        List<EmisorSMTP> emisores = emisoresSMTPService.findAll();
+        for (int i = 0; i < emisores.size(); i++) {
+            downloadEmailAttachments(emisores.get(i).getEmail(), emisores.get(i).getSmtpPassword());
+        }
+    }
+
+
+    public void downloadEmailAttachments(String email, String password) {
         String saveDirectory = this.pathUploadFilesApi + "/mr-automatico";
         SimpleDateFormat formato = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
         SimpleDateFormat formato1 = new SimpleDateFormat("dd/mm/YYYY HH:mm:ss a");
@@ -91,7 +98,7 @@ public class MensajeReceptorAutomatico {
         String facturaPdfZip = "";
         try {
             Store store = session.getStore("imaps");
-            store.connect(this.apiHost, this.apiUserName, this.apiPassword);
+            store.connect(this.apiHost, email, password);
             XPath xPath = XPathFactory.newInstance().newXPath();
             Folder folderInbox = store.getFolder("INBOX");
             folderInbox.open(2);
@@ -277,6 +284,7 @@ public class MensajeReceptorAutomatico {
             this.log.info("Otro error generado por el MR inbox " + ex.getMessage());
         }
     }
+
 
     public static String getCharacterDataFromElement(Element e) {
         Node child = e.getFirstChild();
