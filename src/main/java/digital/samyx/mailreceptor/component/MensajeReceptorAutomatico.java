@@ -1,364 +1,237 @@
 package digital.samyx.mailreceptor.component;
 
-import digital.samyx.mailreceptor.entity.EmisorSMTP;
-import digital.samyx.mailreceptor.entity.FEMensajeReceptorAutomatico;
-import digital.samyx.mailreceptor.service.IEmisoresSMTPService;
-import digital.samyx.mailreceptor.service.IFEMensajeReceptorAutomaticoService;
-import digital.samyx.mailreceptor.util.UnzipFiles;
-import digital.samyx.mailreceptor.util.XmlHelper;
+import digital.samyx.mailreceptor.dto.DocumentoElectronicoDTO;
+import digital.samyx.mailreceptor.dto.EmailAttachmentDTO;
+import digital.samyx.mailreceptor.entity.SucursalReceptorSmtp;
+import digital.samyx.mailreceptor.service.*;
 import jakarta.mail.*;
-import jakarta.mail.internet.InternetAddress;
-import jakarta.mail.internet.MimeBodyPart;
-import jakarta.mail.internet.MimeMessage;
-import jakarta.mail.internet.MimeUtility;
-import jakarta.mail.search.FlagTerm;
-import jakarta.mail.search.SearchTerm;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.w3c.dom.*;
-import org.xml.sax.SAXException;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestTemplate;
 
-import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.xpath.XPath;
-import javax.xml.xpath.XPathConstants;
-import javax.xml.xpath.XPathFactory;
 import java.io.File;
-import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.sql.SQLException;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.util.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import java.util.stream.Collectors;
 
 @Component
+@Slf4j
 public class MensajeReceptorAutomatico {
+
+    @Autowired
+    private RestTemplate restTemplate;
+
+    @Value("${nathbit.api.url}")
+    private String nathbitApiUrl;
+
+    @Value("${nathbit.api.api-key}")
+    private String nathbitApiKey;
+
     @Value("${path.upload.files.api}")
     private String pathUploadFilesApi;
 
     @Autowired
-    private IFEMensajeReceptorAutomaticoService _mrService;
+    private SucursalSmtp emisoresSMTPService;
 
     @Autowired
-    public JavaMailSender emailSender;
+    private IEmailService emailService;
 
     @Autowired
-    private IEmisoresSMTPService emisoresSMTPService;
+    private IFileProcessorService fileProcessorService;
 
+    @Autowired
+    private IFacturaParserService facturaParserService;
 
-    @Value("${correo.de.distribucion}")
-    private String correoDistribucion;
+    @Autowired
+    private INotificationService notificationService;
 
-    @Value("${api.host}")
-    private String apiHost;
+    @Scheduled(fixedDelay = 600000L) // 10 minutos
+    public void procesarCorreos() {
+        List<SucursalReceptorSmtp> emisores = emisoresSMTPService.findAll();
 
-    private final Logger log = LoggerFactory.getLogger(getClass());
-
-    private ZipFile zipFile;
-@Autowired
-private IEmisoresSMTPService emisorSMTPService;
-    @Scheduled(fixedDelay = 60000L)
-    public void probar() throws SQLException, ParserConfigurationException, ParseException, SAXException {
-        List<EmisorSMTP> emisores = emisoresSMTPService.findAll();
-        for (int i = 0; i < emisores.size(); i++) {
-            downloadEmailAttachments(emisores.get(i).getEmail(), emisores.get(i).getSmtpPassword());
-        }
-    }
-
-
-    public void downloadEmailAttachments(String email, String password) {
-        String saveDirectory = this.pathUploadFilesApi + "/mr-automatico";
-        SimpleDateFormat formato = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
-        SimpleDateFormat formato1 = new SimpleDateFormat("dd/mm/YYYY HH:mm:ss a");
-        Properties properties = new Properties();
-        properties.put("mail.store.protocol", "imaps");
-        Session session = Session.getDefaultInstance(properties, null);
-        String emisorFactura = "";
-        String emisorTipoIdentificacion = "";
-        String emisorIdentificacion = "";
-        String fechaEmision = "";
-        String moneda = "";
-        String tipoCambio = "";
-        String totalImpuestos = "";
-        String totalComprobante = "";
-        String receptorTipoIdentificacion = "";
-        String receptorIdentificacion = "";
-        String claveFactura = "";
-        String facturaXml = "";
-        String facturaXmlZip = "";
-        String facturaPdfZip = "";
-        try {
-            Store store = session.getStore("imaps");
-            store.connect(this.apiHost, email, password);
-            XPath xPath = XPathFactory.newInstance().newXPath();
-            Folder folderInbox = store.getFolder("INBOX");
-            folderInbox.open(2);
-            Message[] arrayMessages = folderInbox.search((SearchTerm)new FlagTerm(new Flags(Flags.Flag.SEEN), false));
-            for (int i = 0; i < arrayMessages.length; i++) {
-                String prefijo = System.currentTimeMillis() + "-";
-                Message message = arrayMessages[i];
-                Address[] fromAddress = message.getFrom();
-                String from = fromAddress[0].toString();
-                Pattern pattern = Pattern.compile("<(.*?)>");
-                Matcher matcher = pattern.matcher(from);
-                String enviarA = "";
-                if (matcher.find())
-                    enviarA = matcher.group(1).toString();
-                String contentType = message.getContentType();
-                String messageContent = "";
-                String extension = "";
-                String attachFiles = "";
-                if (contentType.contains("multipart")) {
-                    Multipart multiPart = (Multipart)message.getContent();
-                    int numberOfParts = multiPart.getCount();
-                    for (int partCount = 0; partCount < numberOfParts; partCount++) {
-                        MimeBodyPart part = (MimeBodyPart)multiPart.getBodyPart(partCount);
-                        if ("attachment".equalsIgnoreCase(part.getDisposition())) {
-                            String fileName = prefijo + "sinmata" + getFileName((Part)part).substring(getFileName((Part)part).toString().lastIndexOf("."));
-                            String rutaAchivoGuardado = saveDirectory + File.separator + fileName;
-                            String rutaAchivoGuardado2 = saveDirectory + File.separator;
-                            int n = fileName.lastIndexOf('.');
-                            extension = fileName.substring(n + 1);
-                            if (extension.equalsIgnoreCase("xml") || extension.equalsIgnoreCase("pdf") || extension.equalsIgnoreCase("zip")) {
-                                part.saveFile(rutaAchivoGuardado);
-                                try {
-                                    if (extension.equalsIgnoreCase("zip")) {
-                                        this.zipFile = new ZipFile(rutaAchivoGuardado);
-                                        (new UnzipFiles()).unzip(rutaAchivoGuardado, rutaAchivoGuardado2);
-                                        Enumeration<? extends ZipEntry> entries = this.zipFile.entries();
-                                        while (entries.hasMoreElements()) {
-                                            ZipEntry entry = entries.nextElement();
-                                            String nameFile = entry.getName();
-                                            int n2 = nameFile.lastIndexOf('.');
-                                            extension = nameFile.substring(n2 + 1);
-                                            if (extension.equalsIgnoreCase("xml")) {
-                                                Document xml = XmlHelper.getDocument(rutaAchivoGuardado2 + nameFile);
-                                                if (extension.equalsIgnoreCase("pdf"))
-                                                    facturaPdfZip = facturaPdfZip + nameFile;
-                                                claveFactura = getNameFieldXml(xPath, xml, "Clave");
-                                                if (claveFactura.length() > 30) {
-                                                    fechaEmision = getNameFieldXml(xPath, xml, "FechaEmision");
-                                                    emisorFactura = getNameFieldXml(xPath, xml, "Emisor/Nombre");
-                                                    emisorTipoIdentificacion = getNameFieldXml(xPath, xml, "Emisor/Identificacion/Tipo");
-                                                    emisorIdentificacion = getNameFieldXml(xPath, xml, "Emisor/Identificacion/Numero");
-                                                    try {
-                                                        moneda = getNameFieldXml(xPath, xml, "ResumenFactura/CodigoTipoMoneda/CodigoMoneda");
-                                                        tipoCambio = getNameFieldXml(xPath, xml, "ResumenFactura/CodigoTipoMoneda/TipoCambio");
-                                                    } catch (Exception e) {
-                                                        moneda = "CRC";
-                                                        tipoCambio = "1.00";
-                                                    }
-                                                    try {
-                                                        totalImpuestos = getNameFieldXml(xPath, xml, "ResumenFactura/TotalImpuesto");
-                                                    } catch (Exception e) {
-                                                        totalImpuestos = "0.00";
-                                                    }
-                                                    totalComprobante = getNameFieldXml(xPath, xml, "ResumenFactura/TotalComprobante");
-                                                    receptorTipoIdentificacion = getNameFieldXml(xPath, xml, "Receptor/Identificacion/Tipo");
-                                                    receptorIdentificacion = getNameFieldXml(xPath, xml, "Receptor/Identificacion/Numero");
-                                                    facturaXmlZip = nameFile;
-                                                    try {
-                                                        FEMensajeReceptorAutomatico mr = new FEMensajeReceptorAutomatico();
-                                                        mr.setClave(claveFactura);
-                                                        mr.setCorreoFrom(enviarA);
-                                                        mr.setEmisorFactura(emisorFactura);
-                                                        mr.setEmisorTipoIdentificacion(emisorTipoIdentificacion);
-                                                        mr.setEmisorIdentificacion(emisorIdentificacion);
-                                                        mr.setFechaEmision(fechaEmision);
-                                                        mr.setTotalImpuestos(totalImpuestos);
-                                                        mr.setTotalComprobante(totalComprobante);
-                                                        mr.setReceptorTipoIdentificacion(receptorTipoIdentificacion);
-                                                        mr.setReceptorIdentificacion(receptorIdentificacion);
-                                                        mr.setFechaCreacion(new Date());
-                                                        mr.setFacturaPdf(fileName);
-                                                        mr.setFacturaXml(facturaXmlZip);
-                                                        mr.setMoneda(moneda);
-                                                        mr.setTipoCambio(tipoCambio);
-                                                        mr.setEstado("P");
-                                                        this._mrService.save(mr);
-                                                    } catch (Exception e) {
-                                                        this.log.info("Notifico a " + enviarA + " que ya la factura existe " + claveFactura + emisorFactura);
-                                                        String empresaSaluda = "Soluciones InformMata";
-                                                        String asunto = "Notificacidel sistema de recepciautom- La Factura Electrgenerada por " + emisorFactura + ", ya fue recibida anteriormente.";
-                                                        Date _fechaEmision_ = formato.parse(fechaEmision);
-                                                        this.log.info("Se enviara una notificacia :" + enviarA);
-                                                    }
-                                                    facturaPdfZip = "";
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if (extension.equalsIgnoreCase("xml")) {
-                                        Document xml = XmlHelper.getDocument(rutaAchivoGuardado);
-                                        claveFactura = getNameFieldXml(xPath, xml, "Clave");
-                                        fechaEmision = getNameFieldXml(xPath, xml, "FechaEmision");
-                                        emisorFactura = getNameFieldXml(xPath, xml, "Emisor/Nombre");
-                                        emisorTipoIdentificacion = getNameFieldXml(xPath, xml, "Emisor/Identificacion/Tipo");
-                                        emisorIdentificacion = getNameFieldXml(xPath, xml, "Emisor/Identificacion/Numero");
-                                        try {
-                                            moneda = getNameFieldXml(xPath, xml, "ResumenFactura/CodigoTipoMoneda/CodigoMoneda");
-                                            tipoCambio = getNameFieldXml(xPath, xml, "ResumenFactura/CodigoTipoMoneda/TipoCambio");
-                                        } catch (Exception e) {
-                                            moneda = "CRC";
-                                            tipoCambio = "1.00";
-                                        }
-                                        try {
-                                            totalImpuestos = getNameFieldXml(xPath, xml, "ResumenFactura/TotalImpuesto");
-                                        } catch (Exception e) {
-                                            totalImpuestos = "0.00";
-                                        }
-                                        totalComprobante = getNameFieldXml(xPath, xml, "ResumenFactura/TotalComprobante");
-                                        receptorTipoIdentificacion = getNameFieldXml(xPath, xml, "Receptor/Identificacion/Tipo");
-                                        receptorIdentificacion = getNameFieldXml(xPath, xml, "Receptor/Identificacion/Numero");
-                                        if (claveFactura.length() > 30) {
-                                            File file = new File(rutaAchivoGuardado);
-                                            String nameFe = "fe" + fileName;
-                                            File file2 = new File(saveDirectory + File.separator + nameFe);
-                                            boolean success = file.renameTo(file2);
-                                            if (!success);
-                                            facturaXml = nameFe;
-                                            try {
-                                                FEMensajeReceptorAutomatico mr = new FEMensajeReceptorAutomatico();
-                                                mr.setClave(claveFactura);
-                                                mr.setCorreoFrom(enviarA);
-                                                mr.setEmisorFactura(emisorFactura);
-                                                mr.setEmisorTipoIdentificacion(emisorTipoIdentificacion);
-                                                mr.setEmisorIdentificacion(emisorIdentificacion);
-                                                mr.setFechaEmision(fechaEmision);
-                                                mr.setTotalImpuestos(totalImpuestos);
-                                                mr.setTotalComprobante(totalComprobante);
-                                                mr.setReceptorTipoIdentificacion(receptorTipoIdentificacion);
-                                                mr.setReceptorIdentificacion(receptorIdentificacion);
-                                                mr.setFechaCreacion(new Date());
-                                                mr.setFacturaPdf(prefijo + "sinmata.pdf");
-                                                mr.setFacturaXml(facturaXml);
-                                                mr.setMoneda(moneda);
-                                                mr.setTipoCambio(tipoCambio);
-                                                mr.setEstado("P");
-                                                this._mrService.save(mr);
-                                            } catch (Exception e) {
-                                                this.log.info("Notifico a " + enviarA + " que ya la factura existe " + claveFactura + emisorFactura);
-                                                String empresaSaluda = "Soluciones InformMata";
-                                                String asunto = "Notificacidel sistema de recepciautom- La Factura Electrgenerada por " + emisorFactura + ", ya fue recibida anteriormente.";
-                                                Date _fechaEmision_ = formato.parse(fechaEmision);
-                                                this.log.info("Se enviara una notificacia :" + enviarA);
-                                                enviaNotificacionMR(claveFactura, emisorFactura, empresaSaluda, formato1.format(_fechaEmision_), totalComprobante, enviarA, asunto);
-                                            }
-                                        }
-                                    }
-                                } catch (Exception e) {
-                                    this.log.info("No corresponde a un correo de factura electróniuca");
-                                }
-                            }
-                        } else {
-                            messageContent = part.getContent().toString();
-                        }
-                    }
-                    if (attachFiles.length() > 1)
-                        attachFiles = attachFiles.substring(0, attachFiles.length() - 2);
-                } else if (contentType.contains("application/xml") || contentType.contains("APPLICATION/XML") || contentType.contains("application/pdf") || contentType.contains("APPLICATION/PDF")) {
-                    Object content = message.getContent();
-                    if (content != null)
-                        messageContent = content.toString();
-                }
-                try {
-                    if (claveFactura.equals("") || claveFactura.trim().length() > 30);
-                } catch (Exception exception) {}
-            }
-            folderInbox.close(false);
-            store.close();
-        } catch (NoSuchProviderException ex) {
-            this.log.info("NoSuchProviderException mr inbox" + ex.getMessage());
-        } catch (MessagingException ex) {
-            this.log.info("Could not connect to the message store " + ex.getMessage());
-        } catch (IOException ex) {
-            this.log.info("Otro error generado por el MR inbox " + ex.getMessage());
-        }
-    }
-
-
-    public static String getCharacterDataFromElement(Element e) {
-        Node child = e.getFirstChild();
-        if (child instanceof CharacterData) {
-            CharacterData cd = (CharacterData)child;
-            return cd.getData();
-        }
-        return "";
-    }
-
-    public void enviaNotificacionMR(String clave, String emisorFactura, String empresaSaluda, String fechaEmision, String totalComprobante, String emailTo, String asunto) throws IOException, SQLException, MessagingException {
-        try {
-            MimeMessage message = this.emailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            String msj = "";
-            String consecutivo = clave.substring(21, 41);
-            msj = msj + "<p style=\"font-family: Arial;\">Estimado cliente,</p>";
-            msj = msj + "<p style=\"font-family: Arial;\">El comprobante de Factura Electrcon la consecutivo: <b>" + consecutivo + "</b>, generada por <b>" + emisorFactura + "</b> el <b>" + fechaEmision + "</b> por un monto de <b>" + totalComprobante + "</b> ya fue recibida anteriormente.</b></p>";
-            msj = msj + "<p style=\"font-family: Arial;\">Este correo se genero de forma autompor favor no responder.</b></p>";
-            msj = msj + "<p style=\"font-family: Arial;\">Saludos,</p>";
-            msj = msj + "<p style=\"font-family: Arial;\"><b>" + empresaSaluda + "</b></p>";
-            helper.setTo(new InternetAddress(emailTo.trim(), "Notificacidel sistema de recepciautomatico - " + empresaSaluda));
-            helper.setFrom(new InternetAddress(this.correoDistribucion, "Notificacidel sistema de recepciautomatico"));
-            helper.setSubject(asunto);
-            helper.setText(msj, true);
+        for (SucursalReceptorSmtp emisor : emisores) {
             try {
-                this.emailSender.send(message);
-                this.log.info("Se envun mail a " + emailTo);
+                log.info("Procesando correos para: {}", emisor.getEmail());
+                downloadEmailAttachments(emisor.getEmail(), emisor.getSmtpPassword(),
+                        emisor.getEmailDomain(), emisor);
             } catch (Exception e) {
-                this.log.info("No se pudo enviar el correo a " + emailTo);
-                e.printStackTrace();
+                log.error("Error procesando emisor {}: ", emisor.getEmail(), e);
             }
-        } catch (Exception ex) {
-            System.out.println("Error del reporte: " + ex.getMessage());
         }
     }
 
-    private String getFileName(Part part) throws MessagingException, UnsupportedEncodingException {
-        if (!(part instanceof MimeBodyPart))
-            return part.getFileName();
-        String contentType = part.getContentType();
-        String ret = null;
-        try {
-            ret = MimeUtility.decodeText(part.getFileName());
-            if (contentType.contains("application/xml") || contentType.contains("APPLICATION/XML"))
-                ret = "sinmata.xml";
-            if (contentType.contains("application/pdf") || contentType.contains("APPLICATION/PDF"))
-                ret = "sinmata.pdf";
-        } catch (NullPointerException ex) {
-            if (contentType.contains("application/xml") || contentType.contains("APPLICATION/XML"))
-                ret = "sinmata.xml";
-            if (contentType.contains("application/pdf") || contentType.contains("APPLICATION/PDF"))
-                ret = "sinmata.pdf";
+    public void downloadEmailAttachments(String email, String password, String host,
+                                         SucursalReceptorSmtp emisor) {
+        String saveDirectory = pathUploadFilesApi + "/mr-automatico";
+
+        List<Message> messages = emailService.getUnreadMessages(email, password, host);
+        log.info("Encontrados {} mensajes no leídos para {}", messages.size(), email);
+
+        for (Message message : messages) {
+            try {
+                processMessage(message, saveDirectory, emisor);
+                emailService.markMessageAsRead(message);
+            } catch (Exception e) {
+                log.error("Error procesando mensaje: ", e);
+            }
         }
-        return (ret == null) ? "" : ret;
     }
 
-    private String getNameFieldXml(XPath xPath, Document xml, String field) {
-        String j = "";
-        NodeList fe = null, nc = null;
+    private void processMessage(Message message, String saveDirectory,
+                                SucursalReceptorSmtp emisor) throws Exception {
+        String emailFrom = extractEmailAddress(message);
+        log.info("Procesando mensaje de: {}", emailFrom);
+
+        // Procesar todos los archivos adjuntos
+        Map<String, List<EmailAttachmentDTO>> attachmentsByType =
+                fileProcessorService.processEmailAttachments(message, saveDirectory);
+
+        List<EmailAttachmentDTO> xmlFiles = attachmentsByType.get("xml");
+        List<EmailAttachmentDTO> pdfFiles = attachmentsByType.get("pdf");
+
+        log.info("Archivos encontrados - XMLs: {}, PDFs: {}, ZIPs: {}",
+                xmlFiles.size(), pdfFiles.size(), attachmentsByType.get("zip").size());
+
+        if (xmlFiles.isEmpty()) {
+            log.info("No se encontraron archivos XML válidos en el mensaje");
+            return;
+        }
+
+        // Convertir EmailAttachmentDTO a rutas de archivo
+        List<String> xmlPaths = xmlFiles.stream()
+                .map(EmailAttachmentDTO::getFilePath)
+                .collect(Collectors.toList());
+
+        // Procesar todos los XMLs
+        List<DocumentoElectronicoDTO> documentos = facturaParserService.procesarArchivosXml(xmlPaths);
+
+        log.info("Documentos electrónicos válidos encontrados: {}", documentos.size());
+
+        // Guardar cada documento
+        for (DocumentoElectronicoDTO documento : documentos) {
+            try {
+                // Buscar PDF asociado
+                String pdfFileName = "";
+                if (!pdfFiles.isEmpty()) {
+                    pdfFileName = pdfFiles.get(0).getFileName();
+                }
+
+                guardarDocumento(documento, emisor, pdfFileName);
+
+            } catch (Exception e) {
+                if (e.getMessage() != null && e.getMessage().contains("constraint")) {
+                    log.info("Documento duplicado detectado: {}", documento.getClaveDocumento());
+                    try {
+                        notificationService.sendDuplicateNotification(
+                                documento.getClaveDocumento(),
+                                documento.getDatosFactura().getEmisorFactura(),
+                                documento.getDatosFactura().getFechaEmision(),
+                                documento.getDatosFactura().getTotalComprobante(),
+                                emailFrom
+                        );
+                    } catch (Exception ex) {
+                        log.error("Error enviando notificación: ", ex);
+                    }
+                } else {
+                    log.error("Error guardando documento: ", e);
+                }
+            }
+        }
+    }
+
+    private void guardarDocumento(DocumentoElectronicoDTO documento,
+                                  SucursalReceptorSmtp config,
+                                  String pdfFileName) {
         try {
-            try {
-                fe = (NodeList)xPath.evaluate("/FacturaElectronica/" + field, xml.getDocumentElement(), XPathConstants.NODESET);
-                j = fe.item(0).getTextContent();
-                this.log.info("FE _______________________________ " + j);
-            } catch (Exception exception) {}
-            try {
-                nc = (NodeList)xPath.evaluate("/NotaCreditoElectronica/" + field, xml.getDocumentElement(), XPathConstants.NODESET);
-                j = nc.item(0).getTextContent();
-                this.log.info("NC _______________________________ " + j);
-            } catch (Exception exception) {}
+            // Leer bytes del XML
+            byte[] xmlBytes = Files.readAllBytes(Paths.get(documento.getXmlFileName()));
+
+            // Leer bytes del PDF si existe
+            byte[] pdfBytes = null;
+            if (pdfFileName != null && !pdfFileName.isEmpty()) {
+                String pdfPath = pathUploadFilesApi + "/mr-automatico/" + pdfFileName;
+                File pdfFile = new File(pdfPath);
+                if (pdfFile.exists()) {
+                    pdfBytes = Files.readAllBytes(pdfFile.toPath());
+                }
+            }
+
+            String clave = documento.getClaveDocumento();
+
+            // Preparar request multipart
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+
+            // XML
+            body.add("xmlFile", new ByteArrayResource(xmlBytes) {
+                @Override
+                public String getFilename() {
+                    return clave + ".xml";
+                }
+            });
+
+            // PDF opcional
+            if (pdfBytes != null) {
+                body.add("pdfFile", new ByteArrayResource(pdfBytes) {
+                    @Override
+                    public String getFilename() {
+                        return clave + ".pdf";
+                    }
+                });
+            }
+
+            // Parámetros desde config
+            body.add("empresaId", config.getEmpresa().getId());
+            body.add("sucursalId", config.getSucursal().getId());
+            body.add("crearProveedorSiNoExiste", true);
+            body.add("aceptarAutomaticamente", true);
+
+            // Headers
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+            headers.set("X-API-Key", nathbitApiKey);
+
+            HttpEntity<MultiValueMap<String, Object>> request = new HttpEntity<>(body, headers);
+
+            // Llamar a NathBit
+            String url = nathbitApiUrl + "/api/facturas-recepcion/subir-xml";
+            ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
+
+            if (response.getStatusCode().is2xxSuccessful()) {
+                log.info("✅ Factura {} procesada por NathBit", clave);
+            } else {
+                throw new RuntimeException("Error: " + response.getStatusCode());
+            }
+
         } catch (Exception e) {
-            j = "";
+            log.error("❌ Error enviando factura a NathBit: {}", e.getMessage());
+            throw new RuntimeException(e);
         }
-        return j;
+    }
+
+    private String extractEmailAddress(Message message) throws Exception {
+        Address[] fromAddress = message.getFrom();
+        String from = fromAddress[0].toString();
+
+        Pattern pattern = Pattern.compile("<(.*?)>");
+        Matcher matcher = pattern.matcher(from);
+
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return from;
     }
 }

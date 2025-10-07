@@ -2,9 +2,9 @@
 spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://simple-studio-do-user-17834356-0.g.db.ondigitalocean.com:25060/samyx_dev?ssl-mode=REQUIRED
-    username: doadmin
-    password: AVNS_d_4ApkE_ZCXMb-niHbt
+    url: jdbc:mysql://137.184.208.221:3306/samyx_prod?ssl-mode=REQUIRED
+    username: sammy
+    password: _NHrX37=%#wV
 
   jpa:
     hibernate:
@@ -38,8 +38,6 @@ path:
 
 api:
   host: smtp.gmail.com
-  userName: restaurantevistaalmar07@gmail.com
-  password: skym esbk vgab wkzx
 
 server:
   servlet:
@@ -47,3 +45,8 @@ server:
       timeout: 720m
       cookie:
         max-age: 720m
+logging:
+  level:
+    digital:
+      samyx:
+        mailreceptor: DEBUG
