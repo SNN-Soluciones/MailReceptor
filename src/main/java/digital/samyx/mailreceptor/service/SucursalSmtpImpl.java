@@ -28,4 +28,9 @@ public class SucursalSmtpImpl implements SucursalSmtp {
     public SucursalReceptorSmtp save(SucursalReceptorSmtp emisor) {
         return repository.save(emisor);
     }
+
+    @Override
+    public List<SucursalReceptorSmtp> findAllActivos() {
+        return repository.findByActivoTrueAndProcesarAutomaticamenteTrue();
+    }
 }

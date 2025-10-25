@@ -1,18 +1,20 @@
-
 spring:
   datasource:
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://137.184.208.221:3306/samyx_prod?ssl-mode=REQUIRED
-    username: sammy
-    password: _NHrX37=%#wV
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://45.32.164.243:5432/nathbitpos
+    username: snnsoluciones
+    password: "@39NSNm90@1"
+    hikari:
+      minimum-idle: 2
+      maximum-pool-size: 5
+      connection-timeout: 10000
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: none
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    show-sql: false
 
-    database-platform: org.hibernate.dialect.MySQLDialect
-
-  ##enviar respuesta
   mail:
     host: smtp.gmail.com
     port: 587
@@ -22,29 +24,21 @@ spring:
       mail.smtp.auth: true
       mail.smtp.starttls.enable: true
       mail.smtp.starttls.required: true
-  jmx:
-    default-domain: MensajeReceptorInbox Javier
 
-correo:
-  de:
-    distribucion: fe@samyx.digital
-  no:
-    reply: fe@samyx.digital
+# Configuración NathBit API
+nathbit:
+  api:
+    url: http://localhost:8080  # Cambiar en producción
+    api-key: nathbit-mailreceptor-2024-secure-key-change-this
 
-path:
-  upload:
-    files:
-      api: /home/XmlClientes/
-
-api:
-  host: smtp.gmail.com
+# IMAP
+imap:
+  host: imap.gmail.com
+  port: 993
 
 server:
-  servlet:
-    session:
-      timeout: 720m
-      cookie:
-        max-age: 720m
+  port: 5002
+
 logging:
   level:
     digital:

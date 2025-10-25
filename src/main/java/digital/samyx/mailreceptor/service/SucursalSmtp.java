@@ -9,5 +9,5 @@ public interface SucursalSmtp {
     Optional<SucursalReceptorSmtp> findById(Long id);
     SucursalReceptorSmtp save(SucursalReceptorSmtp emisor);
     List<SucursalReceptorSmtp> findAll();
-
+    List<SucursalReceptorSmtp> findAllActivos();
 }

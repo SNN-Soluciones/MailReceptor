@@ -84,4 +84,12 @@ public class SucursalReceptorSmtp {
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
     }
+
+    public Long getEmpresaId() {
+        return empresa != null ? empresa.getId() : null;
+    }
+
+    public Long getSucursalId() {
+        return sucursal != null ? sucursal.getId() : null;
+    }
 }

@@ -1,7 +1,7 @@
 package digital.samyx.mailreceptor.entity;
 
-import com.snnsoluciones.backnathbitpos.enums.mh.AmbienteHacienda;
-import com.snnsoluciones.backnathbitpos.enums.mh.TipoAutenticacionHacienda;
+import digital.samyx.mailreceptor.enums.mh.AmbienteHacienda;
+import digital.samyx.mailreceptor.enums.mh.TipoAutenticacionHacienda;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.ToString;
