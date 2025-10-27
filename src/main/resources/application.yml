@@ -1,106 +1,46 @@
 spring:
   datasource:
-    hikari:
-      minimum-idle: 2
-      maximum-pool-size: 10
-      initialization-fail-timeout: -1
-      connection-timeout: 10000
+    driver-class-name: org.postgresql.Driver
     url: jdbc:postgresql://45.32.164.243:5432/nathbitpos
     username: snnsoluciones
     password: "@39NSNm90@1"
+    hikari:
+      minimum-idle: 2
+      maximum-pool-size: 5
+      connection-timeout: 10000
 
   jpa:
     hibernate:
-      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:none}
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
-        format_sql: true
-    show-sql: ${SPRING_JPA_SHOW_SQL:false}
+      ddl-auto: none
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    show-sql: false
 
-  # ===== CONFIGURACIÓN DE MAIL OPTIMIZADA =====
   mail:
     host: smtp.gmail.com
-    port: 587  # STARTTLS - más rápido que 465 SSL
+    port: 587
     username: fe@samyx.digital
-    password: hgwlhwxzxzulnivc  # ⬅️ TU CONTRASEÑA PARA ENVÍO
-    default-encoding: UTF-8
+    password: facturas@samyx@1018
     properties:
-      mail:
-        debug: false
-        debug.auth: false
-        smtp:
-          auth: true
-          starttls:
-            enable: true
-            required: true
-          ssl:
-            trust: smtp.gmail.com
-            protocols: TLSv1.2 TLSv1.3
-          # ⬇️ TIMEOUTS CRÍTICOS (aumentados para adjuntos grandes)
-          connectiontimeout: 30000   # 30 segundos para conectar
-          timeout: 60000             # 60 segundos para leer respuesta
-          writetimeout: 60000        # 60 segundos para escribir datos
-          # ⬇️ OPTIMIZACIONES
-          quitwait: false            # No esperar confirmación QUIT
-        mime:
-          charset: UTF-8
-          splitlongparameters: false
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+      mail.smtp.starttls.required: true
 
-# ===== CONFIGURACIÓN DEL SCHEDULER DE EMAILS =====
-app:
-  email:
-    scheduler:
-      enabled: true              # Cambiar a false para deshabilitar
-      max-facturas-por-ciclo: 50 # Máximo de facturas a procesar por minuto
-      circuit-breaker-threshold: 10  # Fallos consecutivos antes de detener
-    max-attachment-size: 10485760  # 10MB límite de adjuntos
-
-  mailreceptor:
+# Configuración NathBit API
+nathbit:
+  api:
+    url: http://localhost:8080  # Cambiar en producción
     api-key: nathbit-mailreceptor-2024-secure-key-change-this
-    enabled: true
 
-  encryption:
-    master-key: ${ENCRYPTION_MASTER_KEY:TuLlaveMaestraSeguraDe32Caracteres!!}
-
-  certificados:
-    presigned-url-duration-minutes: 15
-
-  logos:
-    default-logo-path: "defaults/logo-default.png"
-
-  jwt:
-    secret: ${JWT_SECRET:oY4vU2yN1tR9kQ8wL6bC0pA3fZ7eH5sM8xG4jV1uK9dT2lQ6wP0nB3rF8cJ6mZ4q}
-    expiration: 86400000 # 24 horas
-    refresh-expiration: 604800000 # 7 días
+# IMAP
+imap:
+  host: imap.gmail.com
+  port: 993
 
 server:
-  port: 8080
-  address: 0.0.0.0
-
-storage:
-  spaces:
-    access-key: QTF7BXEVCUCZFPR930G0
-    secret-key: JP3tLInSAGED1AnAnbwrGRlyTXH8jQeWAiqKHqfh
-    endpoint: https://ewr1.vultrobjects.com
-    region: ewr1
-    bucket: snn-soluciones
-    base-folder: NathBit-POS
-
-firma:
-  policy:
-    url: "https://cdn.comprobanteselectronicos.go.cr/xml-schemas/Resolución_General_sobre_disposiciones_técnicas_comprobantes_electrónicos_para_efectos_tributarios.pdf"
-
-gometa:
-  api-key: iyPaqeKXKCCgwKX
+  port: 5002
 
 logging:
   level:
-    root: INFO
-    # ⬇️ DESACTIVAR LOGS VERBOSOS DE MAIL
-    jakarta.mail: OFF
-    org.eclipse.angus.mail: OFF
-    org.springframework.mail: WARN
-    # ⬇️ ACTIVAR LOGS DE TU SERVICIO
-    com.snnsoluciones.backnathbitpos.service.email: INFO
-    com.snnsoluciones.backnathbitpos.scheduler: INFO
+    digital:
+      samyx:
+        mailreceptor: DEBUG
