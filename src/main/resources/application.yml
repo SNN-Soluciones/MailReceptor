@@ -1,7 +1,7 @@
 spring:
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://45.32.164.243:5432/nathbitpos
+    url: jdbc:postgresql://localhost:5433/nathbitpos
     username: snnsoluciones
     password: "@39NSNm90@1"
     hikari:

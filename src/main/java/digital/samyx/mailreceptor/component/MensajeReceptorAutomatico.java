@@ -41,38 +41,44 @@ public class MensajeReceptorAutomatico {
 
     @Scheduled(fixedDelay = 600000L) // 10 minutos
     public void procesarCorreos() {
+        log.info("🔄 Iniciando ciclo de procesamiento de correos...");
         List<SucursalReceptorSmtp> emisores = emisoresSMTPService.findAllActivos();
+
+        log.info("📋 Se encontraron {} configuraciones activas", emisores.size());
 
         for (SucursalReceptorSmtp emisor : emisores) {
             try {
-                log.info("Procesando correos para: {}", emisor.getEmail());
+                log.info("📬 Procesando correos para: {} (Empresa ID: {}, Sucursal ID: {})",
+                        emisor.getEmail(), emisor.getEmpresaId(), emisor.getSucursalId());
                 downloadEmailAttachments(emisor.getEmail(), emisor.getSmtpPassword(),
                         emisor.getEmailDomain(), emisor);
             } catch (Exception e) {
-                log.error("Error procesando emisor {}: ", emisor.getEmail(), e);
+                log.error("❌ Error procesando emisor {}: ", emisor.getEmail(), e);
             }
         }
+
+        log.info("✅ Ciclo de procesamiento completado");
     }
 
     public void downloadEmailAttachments(String email, String password, String host,
                                          SucursalReceptorSmtp emisor) {
 
         List<Message> messages = emailService.getUnreadMessages(email, password, host);
-        log.info("Encontrados {} mensajes no leídos para {}", messages.size(), email);
+        log.info("📨 Encontrados {} mensajes no leídos para {}", messages.size(), email);
 
         for (Message message : messages) {
             try {
                 processMessage(message, emisor);
                 emailService.markMessageAsRead(message);
             } catch (Exception e) {
-                log.error("Error procesando mensaje: ", e);
+                log.error("❌ Error procesando mensaje: ", e);
             }
         }
     }
 
     private void processMessage(Message message, SucursalReceptorSmtp emisor) throws Exception {
         String emailFrom = extractEmailAddress(message);
-        log.info("Procesando mensaje de: {}", emailFrom);
+        log.info("📧 Procesando mensaje de: {}", emailFrom);
 
         // Extraer adjuntos EN MEMORIA
         Map<String, byte[]> xmlFiles = new HashMap<>();
@@ -103,6 +109,8 @@ public class MensajeReceptorAutomatico {
             }
         }
 
+        log.info("📦 Archivos extraídos - XMLs: {}, PDFs: {}", xmlFiles.size(), pdfFiles.size());
+
         // Procesar XMLs
         for (Map.Entry<String, byte[]> entry : xmlFiles.entrySet()) {
             String xmlFileName = entry.getKey();
@@ -117,14 +125,111 @@ public class MensajeReceptorAutomatico {
                     continue;
                 }
 
+                // 🔍 NUEVA VALIDACIÓN: Verificar que el receptor sea la empresa matriz
+                String receptorIdentificacion = extraerReceptorIdentificacion(xmlBytes);
+                String empresaIdentificacion = obtenerIdentificacionEmpresa(emisor.getEmpresaId());
+
+                if (!validarReceptorEsEmpresaMatriz(receptorIdentificacion, empresaIdentificacion)) {
+                    log.warn("⚠️ Factura {} no pertenece a la empresa matriz. Receptor: {}, Empresa: {}",
+                            clave, receptorIdentificacion, empresaIdentificacion);
+                    log.warn("⏭️ Skipeando factura que no pertenece a esta empresa");
+                    continue;
+                }
+
+                log.info("✅ Factura validada - pertenece a la empresa matriz");
+
                 byte[] pdfBytes = buscarPdfPorClave(clave, pdfFiles);
 
                 enviarANathBit(xmlBytes, pdfBytes, clave, emisor);
 
             } catch (Exception e) {
-                log.error("Error procesando XML {}: {}", xmlFileName, e.getMessage());
+                log.error("❌ Error procesando XML {}: {}", xmlFileName, e.getMessage());
             }
         }
+    }
+
+    /**
+     * Extrae el número de identificación del Receptor del XML
+     */
+    private String extraerReceptorIdentificacion(byte[] xmlBytes) {
+        String xml = new String(xmlBytes, StandardCharsets.UTF_8);
+
+        try {
+            // Buscar el tag <Receptor><Identificacion><Numero>
+            Pattern pattern = Pattern.compile("<Receptor>.*?<Identificacion>.*?<Numero>([0-9]+)</Numero>",
+                    Pattern.DOTALL);
+            Matcher matcher = pattern.matcher(xml);
+
+            if (matcher.find()) {
+                String identificacion = matcher.group(1);
+                log.debug("🔍 Receptor identificación extraída: {}", identificacion);
+                return identificacion;
+            }
+
+            log.warn("⚠️ No se encontró identificación del receptor en el XML");
+            return null;
+
+        } catch (Exception e) {
+            log.error("❌ Error extrayendo receptor identificación: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Obtiene la identificación de la empresa desde NathBit API
+     */
+    private String obtenerIdentificacionEmpresa(Long empresaId) {
+        try {
+            String url = nathbitApiUrl + "/api/empresas/" + empresaId + "/identificacion";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-API-Key", nathbitApiKey);
+
+            HttpEntity<Void> request = new HttpEntity<>(headers);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.GET,
+                    request,
+                    Map.class
+            );
+
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                String identificacion = (String) response.getBody().get("identificacion");
+                log.debug("🔍 Identificación empresa {}: {}", empresaId, identificacion);
+                return identificacion;
+            }
+
+            log.error("❌ No se pudo obtener identificación de empresa {}", empresaId);
+            return null;
+
+        } catch (Exception e) {
+            log.error("❌ Error consultando identificación empresa {}: {}", empresaId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Valida que el receptor del XML coincida con la empresa matriz
+     */
+    private boolean validarReceptorEsEmpresaMatriz(String receptorId, String empresaId) {
+        if (receptorId == null || empresaId == null) {
+            log.warn("⚠️ No se puede validar - identificaciones nulas");
+            return false;
+        }
+
+        // Limpiar ambos números (quitar guiones, espacios)
+        String receptorLimpio = receptorId.replaceAll("[^0-9]", "");
+        String empresaLimpio = empresaId.replaceAll("[^0-9]", "");
+
+        boolean esIgual = receptorLimpio.equals(empresaLimpio);
+
+        if (!esIgual) {
+            log.debug("❌ Validación falló - Receptor: {} vs Empresa: {}",
+                    receptorLimpio, empresaLimpio);
+        }
+
+        return esIgual;
     }
 
     private void procesarZipEnMemoria(byte[] zipBytes,
@@ -178,7 +283,7 @@ public class MensajeReceptorAutomatico {
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.MULTIPART_FORM_DATA);
-            headers.set("X-API-Key", nathbitApiKey);  // ← AGREGAR API KEY
+            headers.set("X-API-Key", nathbitApiKey);
 
             HttpEntity<MultiValueMap<String, Object>> request = new HttpEntity<>(body, headers);
 
@@ -187,7 +292,22 @@ public class MensajeReceptorAutomatico {
             ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
 
             if (response.getStatusCode().is2xxSuccessful()) {
-                log.info("✅ Factura {} procesada por NathBit", clave);
+                Map<String, Object> responseBody = response.getBody();
+
+                // Verificar si es duplicada
+                if (responseBody != null && responseBody.containsKey("data")) {
+                    Map<String, Object> data = (Map<String, Object>) responseBody.get("data");
+                    Boolean duplicada = (Boolean) data.get("duplicada");
+
+                    if (Boolean.TRUE.equals(duplicada)) {
+                        log.warn("⚠️ DUPLICADO: Factura {} ya existía en el sistema", clave);
+                        log.info("📋 La factura duplicada fue ignorada - no se procesó nuevamente");
+                    } else {
+                        log.info("✅ Factura {} procesada por NathBit (NUEVA)", clave);
+                    }
+                } else {
+                    log.info("✅ Factura {} procesada por NathBit", clave);
+                }
             }
 
         } catch (Exception e) {
