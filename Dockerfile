@@ -1,0 +1,14 @@
+# Build stage
+FROM maven:3.9-eclipse-temurin-17-alpine AS build
+WORKDIR /app
+COPY pom.xml .
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+# Runtime stage
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+COPY --from=build /app/target/*.war app.war
+ENV JAVA_OPTS="-Xmx256m -Xms128m"
+EXPOSE 5002
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.war"]

@@ -1,9 +1,9 @@
 spring:
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:5433/nathbitpos
-    username: snnsoluciones
-    password: "@39NSNm90@1"
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:nathbitpos}
+    username: ${DB_USERNAME:snnsoluciones}
+    password: ${DB_PASSWORD}
     hikari:
       minimum-idle: 2
       maximum-pool-size: 5
@@ -18,20 +18,18 @@ spring:
   mail:
     host: smtp.gmail.com
     port: 587
-    username: fe@samyx.digital
-    password: facturas@samyx@1018
+    username: ${GMAIL_USERNAME:fe@samyx.digital}
+    password: ${GMAIL_PASSWORD}
     properties:
       mail.smtp.auth: true
       mail.smtp.starttls.enable: true
       mail.smtp.starttls.required: true
 
-# Configuración NathBit API
 nathbit:
   api:
-    url: http://localhost:8080  # Cambiar en producción
-    api-key: nathbit-mailreceptor-2024-secure-key-change-this
+    url: ${NATHBIT_API_URL:http://localhost:8080}
+    api-key: ${NATHBIT_API_KEY}
 
-# IMAP
 imap:
   host: imap.gmail.com
   port: 993
@@ -41,6 +39,4 @@ server:
 
 logging:
   level:
-    digital:
-      samyx:
-        mailreceptor: DEBUG
+    digital.samyx.mailreceptor: INFO

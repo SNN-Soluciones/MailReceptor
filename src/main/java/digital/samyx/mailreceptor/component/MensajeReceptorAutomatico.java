@@ -80,34 +80,10 @@ public class MensajeReceptorAutomatico {
         String emailFrom = extractEmailAddress(message);
         log.info("📧 Procesando mensaje de: {}", emailFrom);
 
-        // Extraer adjuntos EN MEMORIA
         Map<String, byte[]> xmlFiles = new HashMap<>();
         Map<String, byte[]> pdfFiles = new HashMap<>();
 
-        if (message.isMimeType("multipart/*")) {
-            Multipart multipart = (Multipart) message.getContent();
-
-            for (int i = 0; i < multipart.getCount(); i++) {
-                BodyPart bodyPart = multipart.getBodyPart(i);
-
-                if (Part.ATTACHMENT.equalsIgnoreCase(bodyPart.getDisposition())) {
-                    String fileName = bodyPart.getFileName();
-
-                    if (fileName != null) {
-                        fileName = fileName.toLowerCase();
-                        byte[] fileBytes = leerBytes(bodyPart.getInputStream());
-
-                        if (fileName.endsWith(".xml")) {
-                            xmlFiles.put(fileName, fileBytes);
-                        } else if (fileName.endsWith(".pdf")) {
-                            pdfFiles.put(fileName, fileBytes);
-                        } else if (fileName.endsWith(".zip")) {
-                            procesarZipEnMemoria(fileBytes, xmlFiles, pdfFiles);
-                        }
-                    }
-                }
-            }
-        }
+        processPart(message, xmlFiles, pdfFiles);
 
         log.info("📦 Archivos extraídos - XMLs: {}, PDFs: {}", xmlFiles.size(), pdfFiles.size());
 
@@ -144,6 +120,38 @@ public class MensajeReceptorAutomatico {
 
             } catch (Exception e) {
                 log.error("❌ Error procesando XML {}: {}", xmlFileName, e.getMessage());
+            }
+        }
+    }
+
+    private void processPart(Part part, Map<String, byte[]> xmlFiles, Map<String, byte[]> pdfFiles) throws Exception {
+        if (part.isMimeType("multipart/*")) {
+            Multipart multipart = (Multipart) part.getContent();
+            for (int i = 0; i < multipart.getCount(); i++) {
+                processPart(multipart.getBodyPart(i), xmlFiles, pdfFiles);
+            }
+        } else {
+            String disposition = part.getDisposition();
+            String fileName = part.getFileName();
+
+            boolean isAttachment = Part.ATTACHMENT.equalsIgnoreCase(disposition) ||
+                    Part.INLINE.equalsIgnoreCase(disposition) ||
+                    (fileName != null && !fileName.isEmpty());
+
+            if (isAttachment && fileName != null) {
+                fileName = fileName.toLowerCase();
+                byte[] fileBytes = leerBytes(part.getInputStream());
+
+                if (fileName.endsWith(".xml")) {
+                    xmlFiles.put(fileName, fileBytes);
+                    log.info("✅ XML agregado: {}", fileName);
+                } else if (fileName.endsWith(".pdf")) {
+                    pdfFiles.put(fileName, fileBytes);
+                    log.info("✅ PDF agregado: {}", fileName);
+                } else if (fileName.endsWith(".zip")) {
+                    log.info("📦 Procesando ZIP: {}", fileName);
+                    procesarZipEnMemoria(fileBytes, xmlFiles, pdfFiles);
+                }
             }
         }
     }
