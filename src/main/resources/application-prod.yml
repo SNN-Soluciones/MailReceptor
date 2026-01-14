@@ -6,7 +6,7 @@ spring:
     password: ${DB_PASSWORD}
     hikari:
       minimum-idle: 2
-      maximum-pool-size: 5
+      maximum-pool-size: 6
       connection-timeout: 10000
 
   jpa:
