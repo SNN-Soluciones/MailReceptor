@@ -28,7 +28,7 @@ spring:
 # Configuración NathBit API
 nathbit:
   api:
-    url: http://localhost:8080  # Cambiar en producción
+    url: https://api.nathbit.com  # Cambiar en producción
     api-key: nathbit-mailreceptor-2024-secure-key-change-this
 
 # IMAP

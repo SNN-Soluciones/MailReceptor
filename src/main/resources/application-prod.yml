@@ -27,7 +27,7 @@ spring:
 
 nathbit:
   api:
-    url: ${NATHBIT_API_URL:http://localhost:8080}
+    url: https://api.nathbit.com  # Cambiar en producción
     api-key: ${NATHBIT_API_KEY}
 
 imap:
