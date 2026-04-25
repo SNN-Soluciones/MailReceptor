@@ -95,7 +95,7 @@ public class Empresa {
 
     // ===== RELACIONES EXISTENTES =====
     @OneToMany(mappedBy = "empresa", fetch = FetchType.LAZY)
-    private Set<Sucursal> sucursales = new HashSet<>();
+    private Set<Sucursal> sucursales = new HashSet();
 
     @OneToMany(mappedBy = "empresa", fetch = FetchType.LAZY)
     private Set<UsuarioEmpresa> usuarioEmpresas = new HashSet<>();
