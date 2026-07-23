@@ -1,6 +1,6 @@
 package digital.samyx.mailreceptor.component;
 
-import digital.samyx.mailreceptor.entity.SucursalReceptorSmtp;
+import digital.samyx.mailreceptor.dto.ReceptorSmtpConfig;
 import digital.samyx.mailreceptor.service.*;
 import jakarta.mail.*;
 import lombok.extern.slf4j.Slf4j;
@@ -42,11 +42,11 @@ public class MensajeReceptorAutomatico {
     @Scheduled(fixedDelay = 600000L) // 10 minutos
     public void procesarCorreos() {
         log.info("🔄 Iniciando ciclo de procesamiento de correos...");
-        List<SucursalReceptorSmtp> emisores = emisoresSMTPService.findAllActivos();
+        List<ReceptorSmtpConfig> emisores = emisoresSMTPService.findAllActivos();
 
         log.info("📋 Se encontraron {} configuraciones activas", emisores.size());
 
-        for (SucursalReceptorSmtp emisor : emisores) {
+        for (ReceptorSmtpConfig emisor : emisores) {
             try {
                 log.info("📬 Procesando correos para: {} (Empresa ID: {}, Sucursal ID: {})",
                         emisor.getEmail(), emisor.getEmpresaId(), emisor.getSucursalId());
@@ -61,7 +61,7 @@ public class MensajeReceptorAutomatico {
     }
 
     public void downloadEmailAttachments(String email, String password, String host,
-                                         SucursalReceptorSmtp emisor) {
+                                         ReceptorSmtpConfig emisor) {
 
         List<Message> messages = emailService.getUnreadMessages(email, password, host);
         log.info("📨 Encontrados {} mensajes no leídos para {}", messages.size(), email);
@@ -76,7 +76,7 @@ public class MensajeReceptorAutomatico {
         }
     }
 
-    private void processMessage(Message message, SucursalReceptorSmtp emisor) throws Exception {
+    private void processMessage(Message message, ReceptorSmtpConfig emisor) throws Exception {
         String emailFrom = extractEmailAddress(message);
         log.info("📧 Procesando mensaje de: {}", emailFrom);
 
@@ -264,7 +264,7 @@ public class MensajeReceptorAutomatico {
     }
 
     private void enviarANathBit(byte[] xmlBytes, byte[] pdfBytes,
-                                String clave, SucursalReceptorSmtp config) {
+                                String clave, ReceptorSmtpConfig config) {
         try {
             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
 

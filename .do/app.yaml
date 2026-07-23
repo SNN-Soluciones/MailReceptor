@@ -1,0 +1,46 @@
+# DigitalOcean App Platform — MailReceptor como WORKER (poller IMAP, sin HTTP público)
+#
+# MailReceptor ya no usa Postgres: lee los buzones del POS por HTTP
+# (GET /api/facturas-recepcion/smtp-configs, protegido con X-API-Key) y reenvía
+# las facturas a la POS API. Solo depende de servicios públicos → corre en App
+# Platform sin acceso a la BD.
+#
+# REQUISITO PREVIO: el endpoint /api/facturas-recepcion/smtp-configs debe estar
+# vivo en https://api.nathbit.com (deploy del POS) ANTES de arrancar este worker.
+#
+# Crear:
+#   UI:  Create App → GitHub → SNN-Soluciones/MailReceptor → rama master
+#        → Resource type: Worker (no Web Service; no necesita URL pública)
+#   CLI: doctl apps create --spec .do/app.yaml
+#
+# Secreto: NATHBIT_API_KEY se setea en la UI como variable ENCRIPTADA (no se
+# commitea el valor). Debe ser la misma API key del POS (app.mailreceptor.api-key).
+#
+# Costo: un worker NO es gratis (el tier free es solo para static sites). El más
+# chico ronda US$5/mes (el Dockerfile limita a -Xmx256m, entra en 0.5 GB).
+#
+# Regla operativa: UN SOLO MailReceptor activo a la vez. Cuando este worker esté
+# validado, dejá de correr el local y apagá el contenedor viejo del droplet, o dos
+# procesos marcarán los mismos correos como leídos y se pisan.
+
+name: nathbit-mailreceptor
+region: nyc
+
+workers:
+  - name: mailreceptor
+    github:
+      repo: SNN-Soluciones/MailReceptor
+      branch: master
+      deploy_on_push: true
+    dockerfile_path: Dockerfile
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    envs:
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+        scope: RUN_TIME
+      # Setear el VALOR en la UI como SECRET (encriptada). No commitear el valor.
+      - key: NATHBIT_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      # nathbit.api.url ya apunta a https://api.nathbit.com en application-prod.yml.
