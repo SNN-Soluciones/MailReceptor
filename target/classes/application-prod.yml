@@ -2,20 +2,18 @@ spring:
   mail:
     host: smtp.gmail.com
     port: 587
-    username: fe@samyx.digital
-    password: facturas@samyx@1018
+    username: ${GMAIL_USERNAME:fe@samyx.digital}
+    password: ${GMAIL_PASSWORD}
     properties:
       mail.smtp.auth: true
       mail.smtp.starttls.enable: true
       mail.smtp.starttls.required: true
 
-# Configuración NathBit API
 nathbit:
   api:
     url: https://api.nathbit.com  # Cambiar en producción
-    api-key: nathbit-mailreceptor-2024-secure-key-change-this
+    api-key: ${NATHBIT_API_KEY}
 
-# IMAP
 imap:
   host: imap.gmail.com
   port: 993
@@ -25,6 +23,4 @@ server:
 
 logging:
   level:
-    digital:
-      samyx:
-        mailreceptor: DEBUG
+    digital.samyx.mailreceptor: INFO

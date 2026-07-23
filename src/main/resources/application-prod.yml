@@ -1,25 +1,11 @@
 spring:
-  datasource:
-    driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:nathbitpos}
-    username: ${DB_USERNAME:snnsoluciones}
-    password: ${DB_PASSWORD}
-    hikari:
-      minimum-idle: 2
-      maximum-pool-size: 6
-      connection-timeout: 10000
-
-  jpa:
-    hibernate:
-      ddl-auto: none
-    database-platform: org.hibernate.dialect.PostgreSQLDialect
-    show-sql: false
-
   mail:
     host: smtp.gmail.com
     port: 587
     username: ${GMAIL_USERNAME:fe@samyx.digital}
-    password: ${GMAIL_PASSWORD}
+    # Solo lo usa el sender SMTP (notificaciones, hoy sin uso). Default vacío para
+    # que el arranque no dependa de este secreto: el IMAP usa credenciales por buzón.
+    password: ${GMAIL_PASSWORD:}
     properties:
       mail.smtp.auth: true
       mail.smtp.starttls.enable: true
