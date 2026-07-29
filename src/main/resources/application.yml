@@ -2,8 +2,9 @@ spring:
   mail:
     host: smtp.gmail.com
     port: 587
-    username: fe@samyx.digital
-    password: facturas@samyx@1018
+    # Solo lo usa el sender SMTP (hoy sin uso); el IMAP usa credenciales por buzón.
+    username: ${GMAIL_USERNAME:}
+    password: ${GMAIL_PASSWORD:}
     properties:
       mail.smtp.auth: true
       mail.smtp.starttls.enable: true
@@ -12,8 +13,10 @@ spring:
 # Configuración NathBit API
 nathbit:
   api:
-    url: https://api.nathbit.com  # Cambiar en producción
-    api-key: nathbit-mailreceptor-2024-secure-key-change-this
+    url: ${NATHBIT_API_URL:https://api.nathbit.com}
+    # Misma llave que APP_MAILRECEPTOR_API_KEY en el core. Sin default:
+    # el servicio no arranca si falta la variable de entorno.
+    api-key: ${NATHBIT_API_KEY}
 
 # IMAP
 imap:

@@ -2,7 +2,7 @@ spring:
   mail:
     host: smtp.gmail.com
     port: 587
-    username: ${GMAIL_USERNAME:fe@samyx.digital}
+    username: ${GMAIL_USERNAME:}
     # Solo lo usa el sender SMTP (notificaciones, hoy sin uso). Default vacío para
     # que el arranque no dependa de este secreto: el IMAP usa credenciales por buzón.
     password: ${GMAIL_PASSWORD:}
