@@ -1,6 +1,7 @@
 package digital.samyx.mailreceptor.component;
 
 import digital.samyx.mailreceptor.dto.ReceptorSmtpConfig;
+import digital.samyx.mailreceptor.enums.ResultadoMensaje;
 import digital.samyx.mailreceptor.service.*;
 import jakarta.mail.*;
 import lombok.extern.slf4j.Slf4j;
@@ -63,20 +64,46 @@ public class MensajeReceptorAutomatico {
     public void downloadEmailAttachments(String email, String password, String host,
                                          ReceptorSmtpConfig emisor) {
 
-        List<Message> messages = emailService.getUnreadMessages(email, password, host);
-        log.info("📨 Encontrados {} mensajes no leídos para {}", messages.size(), email);
+        // Se consulta una sola vez por buzón y por ciclo, no por cada XML: los correos
+        // que quedan no leídos se vuelven a revisar en cada ciclo, y una llamada por
+        // adjunto multiplicaría el tráfico contra la API del POS.
+        String empresaIdentificacion = obtenerIdentificacionEmpresa(emisor.getEmpresaId());
 
-        for (Message message : messages) {
-            try {
-                processMessage(message, emisor);
-                emailService.markMessageAsRead(message);
-            } catch (Exception e) {
-                log.error("❌ Error procesando mensaje: ", e);
+        try (BuzonImap buzon = emailService.abrirBuzon(email, password, host)) {
+            List<Message> messages = buzon.getNoLeidos();
+            log.info("📨 Encontrados {} mensajes no leídos para {}", messages.size(), email);
+
+            for (Message message : messages) {
+                ResultadoMensaje resultado;
+                try {
+                    resultado = processMessage(message, emisor, empresaIdentificacion);
+                } catch (Exception e) {
+                    log.error("❌ Error procesando mensaje: ", e);
+                    resultado = ResultadoMensaje.ERROR;
+                }
+                aplicarResultado(message, resultado);
             }
         }
     }
 
-    private void processMessage(Message message, ReceptorSmtpConfig emisor) throws Exception {
+    /**
+     * El correo solo se marca como leído cuando su factura llegó al POS. Si no
+     * traía factura, si la factura es de otra empresa o si algo falló, se deja NO
+     * LEÍDO: así queda visible en el buzón para que alguien lo revise y el próximo
+     * ciclo lo vuelve a intentar.
+     */
+    private void aplicarResultado(Message message, ResultadoMensaje resultado) {
+        if (resultado.debeMarcarseLeido()) {
+            emailService.markMessageAsRead(message);
+            log.info("📖 Correo marcado como LEÍDO: {}", resultado.getDescripcion());
+        } else {
+            emailService.markMessageAsUnread(message);
+            log.info("📭 Correo se deja NO LEÍDO: {}", resultado.getDescripcion());
+        }
+    }
+
+    private ResultadoMensaje processMessage(Message message, ReceptorSmtpConfig emisor,
+                                            String empresaIdentificacion) throws Exception {
         String emailFrom = extractEmailAddress(message);
         log.info("📧 Procesando mensaje de: {}", emailFrom);
 
@@ -88,39 +115,57 @@ public class MensajeReceptorAutomatico {
         log.info("📦 Archivos extraídos - XMLs: {}, PDFs: {}", xmlFiles.size(), pdfFiles.size());
 
         // Procesar XMLs
+        List<ResultadoMensaje> resultados = new ArrayList<>();
         for (Map.Entry<String, byte[]> entry : xmlFiles.entrySet()) {
-            String xmlFileName = entry.getKey();
-            byte[] xmlBytes = entry.getValue();
+            resultados.add(procesarXml(entry.getKey(), entry.getValue(), pdfFiles,
+                    emisor, empresaIdentificacion));
+        }
 
-            try {
-                String clave = extraerClave(xmlBytes);
+        return ResultadoMensaje.consolidar(resultados);
+    }
 
-                // ✅ Si es null (MensajeHacienda), skipear
-                if (clave == null) {
-                    log.info("⏭️ Skipeando archivo: {}", xmlFileName);
-                    continue;
-                }
+    private ResultadoMensaje procesarXml(String xmlFileName, byte[] xmlBytes,
+                                         Map<String, byte[]> pdfFiles,
+                                         ReceptorSmtpConfig emisor,
+                                         String empresaIdentificacion) {
+        try {
+            String clave = extraerClave(xmlBytes);
 
-                // 🔍 NUEVA VALIDACIÓN: Verificar que el receptor sea la empresa matriz
-                String receptorIdentificacion = extraerReceptorIdentificacion(xmlBytes);
-                String empresaIdentificacion = obtenerIdentificacionEmpresa(emisor.getEmpresaId());
-
-                if (!validarReceptorEsEmpresaMatriz(receptorIdentificacion, empresaIdentificacion)) {
-                    log.warn("⚠️ Factura {} no pertenece a la empresa matriz. Receptor: {}, Empresa: {}",
-                            clave, receptorIdentificacion, empresaIdentificacion);
-                    log.warn("⏭️ Skipeando factura que no pertenece a esta empresa");
-                    continue;
-                }
-
-                log.info("✅ Factura validada - pertenece a la empresa matriz");
-
-                byte[] pdfBytes = buscarPdfPorClave(clave, pdfFiles);
-
-                enviarANathBit(xmlBytes, pdfBytes, clave, emisor);
-
-            } catch (Exception e) {
-                log.error("❌ Error procesando XML {}: {}", xmlFileName, e.getMessage());
+            // ✅ Si es null (MensajeHacienda), no es una factura que se pueda registrar
+            if (clave == null) {
+                log.info("⏭️ Skipeando archivo: {}", xmlFileName);
+                return ResultadoMensaje.SIN_FACTURA;
             }
+
+            // Sin la identificación de la empresa no se puede validar a quién le
+            // facturaron: se deja el correo no leído en vez de arriesgar una compra
+            // ajena, y se reintenta cuando la API del POS responda.
+            if (empresaIdentificacion == null) {
+                log.error("❌ Sin identificación de la empresa {} - no se puede validar la factura {}",
+                        emisor.getEmpresaId(), clave);
+                return ResultadoMensaje.ERROR;
+            }
+
+            // 🔍 VALIDACIÓN: Verificar que el receptor sea la empresa matriz
+            String receptorIdentificacion = extraerReceptorIdentificacion(xmlBytes);
+
+            if (!validarReceptorEsEmpresaMatriz(receptorIdentificacion, empresaIdentificacion)) {
+                log.warn("⚠️ Factura {} no pertenece a la empresa matriz. Receptor: {}, Empresa: {}",
+                        clave, receptorIdentificacion, empresaIdentificacion);
+                return ResultadoMensaje.NO_CORRESPONDE;
+            }
+
+            log.info("✅ Factura validada - pertenece a la empresa matriz");
+
+            byte[] pdfBytes = buscarPdfPorClave(clave, pdfFiles);
+
+            enviarANathBit(xmlBytes, pdfBytes, clave, emisor);
+
+            return ResultadoMensaje.PROCESADO;
+
+        } catch (Exception e) {
+            log.error("❌ Error procesando XML {}: {}", xmlFileName, e.getMessage());
+            return ResultadoMensaje.ERROR;
         }
     }
 
@@ -299,23 +344,27 @@ public class MensajeReceptorAutomatico {
 
             ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
 
-            if (response.getStatusCode().is2xxSuccessful()) {
-                Map<String, Object> responseBody = response.getBody();
+            // Cualquier respuesta que no sea 2xx es un fallo: se propaga para que el
+            // correo quede no leído y se reintente.
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new IllegalStateException("El POS respondió " + response.getStatusCode());
+            }
 
-                // Verificar si es duplicada
-                if (responseBody != null && responseBody.containsKey("data")) {
-                    Map<String, Object> data = (Map<String, Object>) responseBody.get("data");
-                    Boolean duplicada = (Boolean) data.get("duplicada");
+            Map<String, Object> responseBody = response.getBody();
 
-                    if (Boolean.TRUE.equals(duplicada)) {
-                        log.warn("⚠️ DUPLICADO: Factura {} ya existía en el sistema", clave);
-                        log.info("📋 La factura duplicada fue ignorada - no se procesó nuevamente");
-                    } else {
-                        log.info("✅ Factura {} procesada por NathBit (NUEVA)", clave);
-                    }
+            // Verificar si es duplicada
+            if (responseBody != null && responseBody.containsKey("data")) {
+                Map<String, Object> data = (Map<String, Object>) responseBody.get("data");
+                Boolean duplicada = (Boolean) data.get("duplicada");
+
+                if (Boolean.TRUE.equals(duplicada)) {
+                    log.warn("⚠️ DUPLICADO: Factura {} ya existía en el sistema", clave);
+                    log.info("📋 La factura duplicada fue ignorada - no se procesó nuevamente");
                 } else {
-                    log.info("✅ Factura {} procesada por NathBit", clave);
+                    log.info("✅ Factura {} procesada por NathBit (NUEVA)", clave);
                 }
+            } else {
+                log.info("✅ Factura {} procesada por NathBit", clave);
             }
 
         } catch (Exception e) {
