@@ -9,7 +9,7 @@
 # vivo en https://api.nathbit.com (deploy del POS) ANTES de arrancar este worker.
 #
 # Crear:
-#   UI:  Create App → GitHub → SNN-Soluciones/MailReceptor → rama master
+#   UI:  Create App → GitHub → SNN-Soluciones/MailReceptor → rama main
 #        → Resource type: Worker (no Web Service; no necesita URL pública)
 #   CLI: doctl apps create --spec .do/app.yaml
 #
@@ -30,7 +30,8 @@ workers:
   - name: mailreceptor
     github:
       repo: SNN-Soluciones/MailReceptor
-      branch: master
+      # Este repo usa main (core y fe usan master) — ver INFRA.md.
+      branch: main
       deploy_on_push: true
     dockerfile_path: Dockerfile
     instance_count: 1
