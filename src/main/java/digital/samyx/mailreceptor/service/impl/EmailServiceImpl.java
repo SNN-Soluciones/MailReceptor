@@ -1,5 +1,6 @@
 package digital.samyx.mailreceptor.service.impl;
 
+import digital.samyx.mailreceptor.service.BuzonImap;
 import digital.samyx.mailreceptor.service.IEmailService;
 import jakarta.mail.*;
 import jakarta.mail.search.FlagTerm;
@@ -7,7 +8,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.Arrays;
-import java.util.List;
 import java.util.Properties;
 
 @Service
@@ -15,7 +15,7 @@ import java.util.Properties;
 public class EmailServiceImpl implements IEmailService {
 
     @Override
-    public List<Message> getUnreadMessages(String email, String password, String host) {
+    public BuzonImap abrirBuzon(String email, String password, String host) {
         try {
             String imapHost = normalizeImapHost(host, email);
 
@@ -32,6 +32,11 @@ public class EmailServiceImpl implements IEmailService {
             // Autenticación básica (si el tenant la permite) sobre IMAPS 993
             properties.put("mail.imaps.auth", "true");
             properties.put("mail.imaps.starttls.enable", "false"); // IMAPS directo (SSL)
+
+            // PEEK: leer el cuerpo y los adjuntos NO marca el correo como leído en el
+            // servidor. Sin esto, con solo abrir los adjuntos el correo ya queda leído
+            // y sería imposible dejarlo no leído cuando la factura no aplica.
+            properties.put("mail.imaps.peek", "true");
 
             // Debug selectivo (útil para Microsoft 365)
             boolean debug = imapHost.contains("office365") || imapHost.contains("outlook");
@@ -53,13 +58,13 @@ public class EmailServiceImpl implements IEmailService {
             Message[] messages = inbox.search(new FlagTerm(new Flags(Flags.Flag.SEEN), false));
             log.info("✅ Conectado a {} - {} mensajes no leídos encontrados", imapHost, messages.length);
 
-            return Arrays.asList(messages);
+            return new BuzonImap(store, inbox, Arrays.asList(messages));
 
         } catch (Exception e) {
             log.error("❌ Error al obtener mensajes no leídos de {} con usuario {}: {}",
                     host, email, e.getMessage());
             log.error("Stack trace completo: ", e);
-            return List.of();
+            return BuzonImap.vacio();
         }
     }
 
@@ -70,6 +75,20 @@ public class EmailServiceImpl implements IEmailService {
             log.debug("✓ Mensaje marcado como leído");
         } catch (MessagingException e) {
             log.error("❌ Error al marcar mensaje como leído: ", e);
+        }
+    }
+
+    @Override
+    public void markMessageAsUnread(Message message) {
+        try {
+            // Con PEEK activo la bandera casi nunca llega puesta; se limpia igual por
+            // si el servidor la marcó por su cuenta (o quedó de un ciclo anterior).
+            if (message.isSet(Flags.Flag.SEEN)) {
+                message.setFlag(Flags.Flag.SEEN, false);
+            }
+            log.debug("✓ Mensaje dejado como no leído");
+        } catch (MessagingException e) {
+            log.error("❌ Error al dejar el mensaje como no leído: ", e);
         }
     }
 
