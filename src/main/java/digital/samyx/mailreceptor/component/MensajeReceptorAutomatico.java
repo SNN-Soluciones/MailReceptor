@@ -129,9 +129,19 @@ public class MensajeReceptorAutomatico {
                                          ReceptorSmtpConfig emisor,
                                          String empresaIdentificacion) {
         try {
-            String clave = extraerClave(xmlBytes);
+            String xml = new String(xmlBytes, StandardCharsets.UTF_8);
 
-            // ✅ Si es null (MensajeHacienda), no es una factura que se pueda registrar
+            // Los acuses de Hacienda son máquina-a-máquina: nadie los revisa, así que
+            // el correo se marca leído y no se queda dando vueltas en el buzón.
+            if (esDocumentoDeSistema(xml)) {
+                log.info("⏭️ Acuse de Hacienda - skipeando archivo: {}", xmlFileName);
+                return ResultadoMensaje.MENSAJE_SISTEMA;
+            }
+
+            String clave = extraerClave(xml);
+
+            // Sin clave no hay factura que registrar (documento desconocido o mal
+            // formado): el correo queda no leído para que alguien lo mire.
             if (clave == null) {
                 log.info("⏭️ Skipeando archivo: {}", xmlFileName);
                 return ResultadoMensaje.SIN_FACTURA;
@@ -147,7 +157,7 @@ public class MensajeReceptorAutomatico {
             }
 
             // 🔍 VALIDACIÓN: Verificar que el receptor sea la empresa matriz
-            String receptorIdentificacion = extraerReceptorIdentificacion(xmlBytes);
+            String receptorIdentificacion = extraerReceptorIdentificacion(xml);
 
             if (!validarReceptorEsEmpresaMatriz(receptorIdentificacion, empresaIdentificacion)) {
                 log.warn("⚠️ Factura {} no pertenece a la empresa matriz. Receptor: {}, Empresa: {}",
@@ -202,11 +212,19 @@ public class MensajeReceptorAutomatico {
     }
 
     /**
+     * Acuses del sistema de Hacienda: no son comprobantes de venta, no se registran
+     * y nadie los tiene que leer.
+     */
+    private boolean esDocumentoDeSistema(String xml) {
+        return xml.contains("<MensajeHacienda")
+                || xml.contains("<MensajeReceptor")
+                || xml.contains("<ConfirmacionComprobante");
+    }
+
+    /**
      * Extrae el número de identificación del Receptor del XML
      */
-    private String extraerReceptorIdentificacion(byte[] xmlBytes) {
-        String xml = new String(xmlBytes, StandardCharsets.UTF_8);
-
+    private String extraerReceptorIdentificacion(String xml) {
         try {
             // Buscar el tag <Receptor><Identificacion><Numero>
             Pattern pattern = Pattern.compile("<Receptor>.*?<Identificacion>.*?<Numero>([0-9]+)</Numero>",
@@ -383,17 +401,7 @@ public class MensajeReceptorAutomatico {
         return buffer.toByteArray();
     }
 
-    private String extraerClave(byte[] xmlBytes) {
-        String xml = new String(xmlBytes, StandardCharsets.UTF_8);
-
-        // ✅ DETECTAR tipos de documentos NO VÁLIDOS - Skipear
-        if (xml.contains("<MensajeHacienda") ||
-                xml.contains("<MensajeReceptor") ||
-                xml.contains("<ConfirmacionComprobante")) {
-            log.info("⏭️ Documento de sistema detectado - skipeando");
-            return null;
-        }
-
+    private String extraerClave(String xml) {
         // ✅ VALIDAR que sea un documento de venta válido
         boolean esDocumentoValido = xml.contains("<FacturaElectronica") ||
                 xml.contains("<NotaCreditoElectronica") ||
@@ -431,13 +439,17 @@ public class MensajeReceptorAutomatico {
         return from;
     }
 
-    private byte[] buscarPdfPorClave(String clave, Map<String, byte[]> pdfFiles) {
+    /** Package-private (no private) para poder probarlo sin levantar el contexto. */
+    byte[] buscarPdfPorClave(String clave, Map<String, byte[]> pdfFiles) {
         if (pdfFiles.isEmpty()) {
             return null;
         }
 
-        // Extraer consecutivo de la clave (últimos 20 dígitos)
-        String consecutivo = clave.length() >= 20 ? clave.substring(21, 41) : "";
+        // Extraer el consecutivo de la clave: en la clave de 50 dígitos de Hacienda
+        // ocupa las posiciones 21..40 (3 país + 6 fecha + 12 cédula = 21 de prefijo).
+        // Si la clave viniera más corta, se busca solo por clave completa en vez de
+        // reventar y dejar el correo atascado reintentándose cada ciclo.
+        String consecutivo = clave.length() >= 41 ? clave.substring(21, 41) : "";
 
         // Buscar PDF que contenga la clave o el consecutivo
         for (Map.Entry<String, byte[]> pdfEntry : pdfFiles.entrySet()) {

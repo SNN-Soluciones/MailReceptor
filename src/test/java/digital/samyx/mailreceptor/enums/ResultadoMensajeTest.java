@@ -11,9 +11,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ResultadoMensajeTest {
 
     @Test
-    @DisplayName("solo se marca como leído cuando la factura llegó al POS")
-    void soloProcesadoSeMarcaComoLeido() {
+    @DisplayName("solo queda leído lo que ya no necesita que nadie lo revise")
+    void soloSeMarcaLeidoLoQueNoNecesitaRevision() {
         assertThat(ResultadoMensaje.PROCESADO.debeMarcarseLeido()).isTrue();
+        assertThat(ResultadoMensaje.MENSAJE_SISTEMA.debeMarcarseLeido()).isTrue();
         assertThat(ResultadoMensaje.SIN_FACTURA.debeMarcarseLeido()).isFalse();
         assertThat(ResultadoMensaje.NO_CORRESPONDE.debeMarcarseLeido()).isFalse();
         assertThat(ResultadoMensaje.ERROR.debeMarcarseLeido()).isFalse();
@@ -27,10 +28,29 @@ class ResultadoMensajeTest {
     }
 
     @Test
-    @DisplayName("un mensaje de Hacienda no cuenta como factura")
-    void mensajesDeHaciendaSonSinFactura() {
-        assertThat(ResultadoMensaje.consolidar(List.of(ResultadoMensaje.SIN_FACTURA)))
-                .isEqualTo(ResultadoMensaje.SIN_FACTURA);
+    @DisplayName("un correo con puros acuses de Hacienda se marca leído")
+    void soloAcusesDeHaciendaSeMarcaLeido() {
+        assertThat(ResultadoMensaje.consolidar(
+                List.of(ResultadoMensaje.MENSAJE_SISTEMA, ResultadoMensaje.MENSAJE_SISTEMA)))
+                .isEqualTo(ResultadoMensaje.MENSAJE_SISTEMA);
+    }
+
+    @Test
+    @DisplayName("basta un adjunto no reconocido para que el correo quede no leído")
+    void unAdjuntoDesconocidoJuntoAUnAcuseDejaElCorreoSinLeer() {
+        ResultadoMensaje resultado = ResultadoMensaje.consolidar(
+                List.of(ResultadoMensaje.MENSAJE_SISTEMA, ResultadoMensaje.SIN_FACTURA));
+
+        assertThat(resultado).isEqualTo(ResultadoMensaje.SIN_FACTURA);
+        assertThat(resultado.debeMarcarseLeido()).isFalse();
+    }
+
+    @Test
+    @DisplayName("una factura junto a un acuse manda sobre el acuse")
+    void laFacturaMandaSobreElAcuse() {
+        assertThat(ResultadoMensaje.consolidar(
+                List.of(ResultadoMensaje.MENSAJE_SISTEMA, ResultadoMensaje.PROCESADO)))
+                .isEqualTo(ResultadoMensaje.PROCESADO);
     }
 
     @Test
