@@ -25,6 +25,18 @@ import java.util.zip.*;
 @Slf4j
 public class MensajeReceptorAutomatico {
 
+    /**
+     * Límites contra adjuntos hostiles. Los buzones reciben correo de cualquier
+     * proveedor (o de cualquiera que conozca la dirección), y el worker corre con
+     * -Xmx256m: sin tope, un ZIP de 1 MB que descomprime a gigas (zip bomb) tumba
+     * el proceso, y como el correo queda NO LEÍDO se reintenta cada ciclo — un
+     * denegación de servicio permanente para todos los tenants. Una factura
+     * electrónica pesa decenas de KB; estos topes tienen holgura de sobra.
+     */
+    static final long MAX_BYTES_ADJUNTO = 15L * 1024 * 1024;        // por adjunto
+    static final long MAX_BYTES_DESCOMPRIMIDOS_ZIP = 30L * 1024 * 1024; // suma de un ZIP
+    static final int MAX_ENTRADAS_ZIP = 100;
+
     @Autowired
     private RestTemplate restTemplate;
 
@@ -195,7 +207,21 @@ public class MensajeReceptorAutomatico {
 
             if (isAttachment && fileName != null) {
                 fileName = fileName.toLowerCase();
-                byte[] fileBytes = leerBytes(part.getInputStream());
+                if (!fileName.endsWith(".xml") && !fileName.endsWith(".pdf") && !fileName.endsWith(".zip")) {
+                    return; // ni se descarga: solo interesan estos tres tipos
+                }
+                // getSize() sale del BODYSTRUCTURE (sin descargar el cuerpo); -1 = desconocido.
+                int tamanoDeclarado = part.getSize();
+                if (tamanoDeclarado > MAX_BYTES_ADJUNTO) {
+                    log.warn("⚠️ Adjunto {} ignorado: {} bytes supera el máximo de {} bytes",
+                            fileName, tamanoDeclarado, MAX_BYTES_ADJUNTO);
+                    return;
+                }
+                byte[] fileBytes = leerBytesAcotado(part.getInputStream(), MAX_BYTES_ADJUNTO);
+                if (fileBytes == null) {
+                    log.warn("⚠️ Adjunto {} ignorado: supera el máximo de {} bytes", fileName, MAX_BYTES_ADJUNTO);
+                    return;
+                }
 
                 if (fileName.endsWith(".xml")) {
                     xmlFiles.put(fileName, fileBytes);
@@ -311,13 +337,37 @@ public class MensajeReceptorAutomatico {
              ZipInputStream zis = new ZipInputStream(bais)) {
 
             ZipEntry entry;
+            int entradas = 0;
+            long totalDescomprimido = 0;
             while ((entry = zis.getNextEntry()) != null) {
+                if (++entradas > MAX_ENTRADAS_ZIP) {
+                    log.warn("⚠️ ZIP con más de {} entradas: se ignora el resto", MAX_ENTRADAS_ZIP);
+                    return;
+                }
+                // Solo el nombre base: nunca se escribe a disco, pero tampoco se
+                // quiere una llave de mapa con "../" ni rutas anidadas.
                 String name = entry.getName().toLowerCase();
-                byte[] fileBytes = leerBytes(zis);
+                int barra = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+                if (barra >= 0) name = name.substring(barra + 1);
+
+                // Solo XML y PDF; los ZIP anidados no se abren (bombas recursivas).
+                if (entry.isDirectory() || !(name.endsWith(".xml") || name.endsWith(".pdf"))) {
+                    zis.closeEntry();
+                    continue;
+                }
+
+                long restante = MAX_BYTES_DESCOMPRIMIDOS_ZIP - totalDescomprimido;
+                byte[] fileBytes = leerBytesAcotado(zis, Math.min(MAX_BYTES_ADJUNTO, restante));
+                if (fileBytes == null) {
+                    log.warn("⚠️ ZIP supera el máximo descomprimido ({} bytes): se descarta el resto",
+                            MAX_BYTES_DESCOMPRIMIDOS_ZIP);
+                    return;
+                }
+                totalDescomprimido += fileBytes.length;
 
                 if (name.endsWith(".xml")) {
                     xmlFiles.put(name, fileBytes);
-                } else if (name.endsWith(".pdf")) {
+                } else {
                     pdfFiles.put(name, fileBytes);
                 }
 
@@ -391,11 +441,22 @@ public class MensajeReceptorAutomatico {
         }
     }
 
-    private byte[] leerBytes(InputStream is) throws IOException {
+    /**
+     * Lee el stream a memoria hasta {@code maxBytes}. Si el contenido supera el
+     * tope devuelve {@code null} (y deja de leer): el llamador descarta el adjunto
+     * en vez de seguir acumulando hasta agotar el heap. Package-private para
+     * probarlo sin levantar el contexto.
+     */
+    static byte[] leerBytesAcotado(InputStream is, long maxBytes) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        byte[] data = new byte[1024];
+        byte[] data = new byte[8192];
+        long total = 0;
         int nRead;
         while ((nRead = is.read(data, 0, data.length)) != -1) {
+            total += nRead;
+            if (total > maxBytes) {
+                return null;
+            }
             buffer.write(data, 0, nRead);
         }
         return buffer.toByteArray();

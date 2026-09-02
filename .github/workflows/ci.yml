@@ -1,0 +1,86 @@
+name: CI - Tests y seguridad
+
+# MailReceptor no tenía CI: el Dockerfile empaqueta con -DskipTests y App
+# Platform despliega en cada push a main, así que nada ejecutaba los tests ni
+# revisaba dependencias o secretos antes de llegar a producción. Este workflow
+# cierra eso con herramientas gratuitas/open source (mismo esquema que el
+# job `seguridad` de Back-NathBit-POS y nathbit-fiscal).
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches:
+      - 'feature/**'
+      - 'claude/**'
+  workflow_dispatch:
+
+# Una sola corrida por rama (misma llave para push y pull_request).
+concurrency:
+  group: ci-mail-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Tests
+        run: ./mvnw -B --no-transfer-progress verify
+
+  # SAST + secretos + SCA. Todo gratuito; ninguno necesita cuenta ni licencia.
+  seguridad:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (historial completo para gitleaks)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Secretos en el código Y en el historial de git.
+      - name: gitleaks
+        env:
+          GITLEAKS_VERSION: 8.24.3
+        run: |
+          curl -sSL -o gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar xzf gitleaks.tgz gitleaks
+          # Bloqueante: el árbol de trabajo actual.
+          ./gitleaks dir . --redact --no-banner --exit-code 1
+          # Informativo: el historial. Reporta las credenciales viejas hasta que
+          # se roten y se listen en .gitleaksignore; no bloquea.
+          ./gitleaks git . --redact --no-banner || echo "::warning::gitleaks encontró secretos en el historial (rotar y listar en .gitleaksignore)"
+
+      # SAST con las reglas públicas de Semgrep (OWASP Top 10 + Java).
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: semgrep
+        run: |
+          python3 -m pip install --quiet semgrep
+          semgrep scan --config p/java --config p/owasp-top-ten --config p/secrets \
+            --error --severity ERROR --metrics=off --exclude target --exclude src/test .
+
+      # SCA: dependencias con CVE conocido (base de datos OSV, sin cuenta).
+      - name: osv-scanner
+        env:
+          OSV_VERSION: 2.0.3
+        run: |
+          curl -sSL -o osv-scanner "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
+          chmod +x osv-scanner
+          ./osv-scanner scan source -L pom.xml

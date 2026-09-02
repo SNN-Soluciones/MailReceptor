@@ -2,9 +2,10 @@ spring:
   mail:
     host: smtp.gmail.com
     port: 587
-    username: ${GMAIL_USERNAME:fe@samyx.digital}
-    # Solo lo usa el sender SMTP (notificaciones, hoy sin uso). Default vacío para
-    # que el arranque no dependa de este secreto: el IMAP usa credenciales por buzón.
+    # Solo lo usa el sender SMTP (notificaciones, hoy sin uso). Defaults vacíos
+    # para que el arranque no dependa de este secreto: el IMAP usa credenciales
+    # por buzón. Ningún valor real vive en el repo.
+    username: ${GMAIL_USERNAME:}
     password: ${GMAIL_PASSWORD:}
     properties:
       mail.smtp.auth: true
@@ -13,7 +14,7 @@ spring:
 
 nathbit:
   api:
-    url: https://api.nathbit.com  # Cambiar en producción
+    url: ${NATHBIT_API_URL:https://api.nathbit.com}
     api-key: ${NATHBIT_API_KEY}
 
 imap:
