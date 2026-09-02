@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # No dejar el GITHUB_TOKEN escrito en la config de git del runner: el
           # build no hace operaciones autenticadas contra el repo.
@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (historial completo para gitleaks)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           # Igual que arriba: los escáneres solo leen el árbol y el historial ya
