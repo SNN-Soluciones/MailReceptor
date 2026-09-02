@@ -19,12 +19,26 @@ public class EmailServiceImpl implements IEmailService {
         try {
             String imapHost = normalizeImapHost(host, email);
 
+            // El host viene de la configuración que el tenant carga en el POS. Sin
+            // este filtro, un valor como "10.0.0.5" o "localhost" haría que el
+            // worker intente un LOGIN (con la contraseña del buzón) contra una
+            // máquina de la red interna o contra un servidor del atacante (SSRF /
+            // exfiltración de credenciales). Solo se aceptan hostnames públicos.
+            if (!esHostImapPermitido(imapHost)) {
+                log.error("❌ Host IMAP rechazado para {}: '{}' no es un hostname público válido", email, host);
+                return BuzonImap.vacio();
+            }
+
             Properties properties = new Properties();
             properties.put("mail.store.protocol", "imaps");
             properties.put("mail.imaps.host", imapHost);
             properties.put("mail.imaps.port", "993");
             properties.put("mail.imaps.ssl.enable", "true");
-            properties.put("mail.imaps.ssl.trust", imapHost);
+            // OJO: NO poner `mail.imaps.ssl.trust`. Con un host en esa propiedad
+            // Angus Mail acepta CUALQUIER certificado para ese host (sin validar la
+            // cadena), lo que permite a un intermediario leer la contraseña del
+            // buzón. El truststore de la JVM valida Gmail/Microsoft 365 sin ayuda.
+            properties.put("mail.imaps.ssl.checkserveridentity", "true");
             properties.put("mail.imaps.ssl.protocols", "TLSv1.2 TLSv1.3");
             properties.put("mail.imaps.timeout", "30000");
             properties.put("mail.imaps.connectiontimeout", "30000");
@@ -38,17 +52,15 @@ public class EmailServiceImpl implements IEmailService {
             // y sería imposible dejarlo no leído cuando la factura no aplica.
             properties.put("mail.imaps.peek", "true");
 
-            // Debug selectivo (útil para Microsoft 365)
-            boolean debug = imapHost.contains("office365") || imapHost.contains("outlook");
-            properties.put("mail.debug", String.valueOf(debug));
-
+            // Sin `mail.debug`: el trace de Angus Mail vuelca a stdout los FETCH
+            // completos (cuerpos y adjuntos de las facturas de los clientes). Si hace
+            // falta diagnosticar un buzón, se activa a mano y por poco tiempo con
+            // -Dmail.debug=true, nunca desde el código.
             Session session = Session.getInstance(properties);
-            if (debug) session.setDebug(true);
 
             Store store = session.getStore("imaps");
 
             log.info("📧 Conectando a {} con usuario {}", imapHost, email);
-            log.info("🔑 Longitud de password: {}", password != null ? password.length() : 0);
 
             store.connect(imapHost, email, password);
 
@@ -61,9 +73,10 @@ public class EmailServiceImpl implements IEmailService {
             return new BuzonImap(store, inbox, Arrays.asList(messages));
 
         } catch (Exception e) {
+            // Solo el mensaje: el stack de Angus Mail puede incluir respuestas
+            // crudas del servidor y no aporta nada para un buzón que no conecta.
             log.error("❌ Error al obtener mensajes no leídos de {} con usuario {}: {}",
                     host, email, e.getMessage());
-            log.error("Stack trace completo: ", e);
             return BuzonImap.vacio();
         }
     }
@@ -90,6 +103,23 @@ public class EmailServiceImpl implements IEmailService {
         } catch (MessagingException e) {
             log.error("❌ Error al dejar el mensaje como no leído: ", e);
         }
+    }
+
+    /**
+     * Un host IMAP aceptable es un nombre de dominio público: con al menos un
+     * punto, sin ser una IP literal (v4 o v6), ni localhost, ni un TLD interno.
+     * Package-private para probarlo sin levantar el contexto.
+     */
+    static boolean esHostImapPermitido(String host) {
+        if (host == null || host.isBlank()) return false;
+        String h = host.trim().toLowerCase();
+        if (h.length() > 253 || !h.matches("[a-z0-9.-]+")) return false;
+        if (h.startsWith(".") || h.endsWith(".") || !h.contains(".")) return false;
+        if (h.matches("\\d{1,3}(\\.\\d{1,3}){3}")) return false; // IPv4 literal
+        if (h.equals("localhost") || h.endsWith(".localhost")) return false;
+        if (h.endsWith(".local") || h.endsWith(".internal") || h.endsWith(".lan")
+                || h.endsWith(".home") || h.endsWith(".arpa")) return false;
+        return true;
     }
 
     /**

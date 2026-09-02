@@ -2,8 +2,13 @@ spring:
   mail:
     host: smtp.gmail.com
     port: 587
-    username: fe@samyx.digital
-    password: facturas@samyx@1018
+    # Credenciales SMTP del sender de notificaciones (hoy sin uso). NUNCA van en
+    # el repo: antes había un usuario y una contraseña reales acá y quedaron en el
+    # historial de git (hallazgo de gitleaks, rotadas). Se inyectan por variable
+    # de entorno; vacías, el sender simplemente no autentica y el poller IMAP
+    # (que usa credenciales por buzón) sigue funcionando.
+    username: ${GMAIL_USERNAME:}
+    password: ${GMAIL_PASSWORD:}
     properties:
       mail.smtp.auth: true
       mail.smtp.starttls.enable: true
@@ -12,8 +17,11 @@ spring:
 # Configuración NathBit API
 nathbit:
   api:
-    url: https://api.nathbit.com  # Cambiar en producción
-    api-key: nathbit-mailreceptor-2024-secure-key-change-this
+    url: ${NATHBIT_API_URL:http://localhost:8080}
+    # Misma API key que `app.mailreceptor.api-key` en el POS. Sin default: si no
+    # está seteada, el POS rechaza las llamadas (401) y el log lo dice; mejor eso
+    # que un valor de relleno que alguien termine copiando a producción.
+    api-key: ${NATHBIT_API_KEY:}
 
 # IMAP
 imap:
@@ -27,4 +35,4 @@ logging:
   level:
     digital:
       samyx:
-        mailreceptor: DEBUG
+        mailreceptor: INFO
