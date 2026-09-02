@@ -29,6 +29,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # No dejar el GITHUB_TOKEN escrito en la config de git del runner: el
+          # build no hace operaciones autenticadas contra el repo.
+          persist-credentials: false
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -48,6 +52,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Igual que arriba: los escáneres solo leen el árbol y el historial ya
+          # descargado, no vuelven a hablar con GitHub.
+          persist-credentials: false
 
       # Secretos en el código Y en el historial de git.
       - name: gitleaks

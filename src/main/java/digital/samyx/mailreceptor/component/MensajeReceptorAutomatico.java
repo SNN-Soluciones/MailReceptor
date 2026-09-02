@@ -37,6 +37,14 @@ public class MensajeReceptorAutomatico {
     static final long MAX_BYTES_DESCOMPRIMIDOS_ZIP = 30L * 1024 * 1024; // suma de un ZIP
     static final int MAX_ENTRADAS_ZIP = 100;
 
+    /**
+     * Techo de TODO lo que un correo deja en memoria a la vez. Los otros dos
+     * límites son por adjunto y por ZIP, así que un correo con varios ZIP podía
+     * sumar bastante más que cualquiera de ellos por separado y seguir sin
+     * pasarse de ninguno. Este es el que mira el total.
+     */
+    static final long MAX_BYTES_MENSAJE = 60L * 1024 * 1024;
+
     @Autowired
     private RestTemplate restTemplate;
 
@@ -122,7 +130,9 @@ public class MensajeReceptorAutomatico {
         Map<String, byte[]> xmlFiles = new HashMap<>();
         Map<String, byte[]> pdfFiles = new HashMap<>();
 
-        processPart(message, xmlFiles, pdfFiles);
+        // Lo acumulado por ESTE correo, compartido entre adjuntos y ZIP.
+        long[] acumulado = {0L};
+        processPart(message, xmlFiles, pdfFiles, acumulado);
 
         log.info("📦 Archivos extraídos - XMLs: {}, PDFs: {}", xmlFiles.size(), pdfFiles.size());
 
@@ -191,11 +201,12 @@ public class MensajeReceptorAutomatico {
         }
     }
 
-    private void processPart(Part part, Map<String, byte[]> xmlFiles, Map<String, byte[]> pdfFiles) throws Exception {
+    private void processPart(Part part, Map<String, byte[]> xmlFiles, Map<String, byte[]> pdfFiles,
+                             long[] acumulado) throws Exception {
         if (part.isMimeType("multipart/*")) {
             Multipart multipart = (Multipart) part.getContent();
             for (int i = 0; i < multipart.getCount(); i++) {
-                processPart(multipart.getBodyPart(i), xmlFiles, pdfFiles);
+                processPart(multipart.getBodyPart(i), xmlFiles, pdfFiles, acumulado);
             }
         } else {
             String disposition = part.getDisposition();
@@ -217,21 +228,27 @@ public class MensajeReceptorAutomatico {
                             fileName, tamanoDeclarado, MAX_BYTES_ADJUNTO);
                     return;
                 }
-                byte[] fileBytes = leerBytesAcotado(part.getInputStream(), MAX_BYTES_ADJUNTO);
+                long margen = Math.min(MAX_BYTES_ADJUNTO, MAX_BYTES_MENSAJE - acumulado[0]);
+                byte[] fileBytes = leerBytesAcotado(part.getInputStream(), margen);
                 if (fileBytes == null) {
-                    log.warn("⚠️ Adjunto {} ignorado: supera el máximo de {} bytes", fileName, MAX_BYTES_ADJUNTO);
+                    log.warn("⚠️ Adjunto {} ignorado: no entra en el máximo por adjunto ({} bytes) "
+                            + "ni en lo que queda del máximo por correo ({} bytes)",
+                            fileName, MAX_BYTES_ADJUNTO, MAX_BYTES_MENSAJE);
                     return;
                 }
 
-                if (fileName.endsWith(".xml")) {
-                    xmlFiles.put(fileName, fileBytes);
-                    log.info("✅ XML agregado: {}", fileName);
-                } else if (fileName.endsWith(".pdf")) {
-                    pdfFiles.put(fileName, fileBytes);
-                    log.info("✅ PDF agregado: {}", fileName);
-                } else if (fileName.endsWith(".zip")) {
+                if (fileName.endsWith(".zip")) {
+                    // El ZIP en sí no se conserva: lo que cuenta es lo que salga de él.
                     log.info("📦 Procesando ZIP: {}", fileName);
-                    procesarZipEnMemoria(fileBytes, xmlFiles, pdfFiles);
+                    procesarZipEnMemoria(fileBytes, xmlFiles, pdfFiles, acumulado);
+                    return;
+                }
+
+                acumulado[0] += fileBytes.length;
+                if (fileName.endsWith(".xml")) {
+                    log.info("✅ XML agregado: {}", claveUnica(xmlFiles, fileName, fileBytes));
+                } else {
+                    log.info("✅ PDF agregado: {}", claveUnica(pdfFiles, fileName, fileBytes));
                 }
             }
         }
@@ -331,7 +348,8 @@ public class MensajeReceptorAutomatico {
 
     private void procesarZipEnMemoria(byte[] zipBytes,
                                       Map<String, byte[]> xmlFiles,
-                                      Map<String, byte[]> pdfFiles) throws Exception {
+                                      Map<String, byte[]> pdfFiles,
+                                      long[] acumulado) throws Exception {
 
         try (ByteArrayInputStream bais = new ByteArrayInputStream(zipBytes);
              ZipInputStream zis = new ZipInputStream(bais)) {
@@ -356,22 +374,48 @@ public class MensajeReceptorAutomatico {
                     continue;
                 }
 
-                long restante = MAX_BYTES_DESCOMPRIMIDOS_ZIP - totalDescomprimido;
+                long restante = Math.min(
+                        MAX_BYTES_DESCOMPRIMIDOS_ZIP - totalDescomprimido,
+                        MAX_BYTES_MENSAJE - acumulado[0]);
                 byte[] fileBytes = leerBytesAcotado(zis, Math.min(MAX_BYTES_ADJUNTO, restante));
                 if (fileBytes == null) {
-                    log.warn("⚠️ ZIP supera el máximo descomprimido ({} bytes): se descarta el resto",
-                            MAX_BYTES_DESCOMPRIMIDOS_ZIP);
+                    log.warn("⚠️ ZIP: se alcanzó el máximo descomprimido ({} bytes) o el máximo "
+                            + "por correo ({} bytes); se descarta el resto",
+                            MAX_BYTES_DESCOMPRIMIDOS_ZIP, MAX_BYTES_MENSAJE);
                     return;
                 }
                 totalDescomprimido += fileBytes.length;
+                acumulado[0] += fileBytes.length;
 
-                if (name.endsWith(".xml")) {
-                    xmlFiles.put(name, fileBytes);
-                } else {
-                    pdfFiles.put(name, fileBytes);
-                }
+                // Clave única: al quedarnos con el nombre base, "a/factura.xml" y
+                // "b/factura.xml" colisionaban y el segundo pisaba al primero.
+                claveUnica(name.endsWith(".xml") ? xmlFiles : pdfFiles, name, fileBytes);
 
                 zis.closeEntry();
+            }
+        }
+    }
+
+    /**
+     * Guarda el archivo con una clave libre y devuelve la clave usada. Si el
+     * nombre ya estaba tomado agrega un sufijo antes de la extensión
+     * (factura.xml, factura-2.xml…), así ningún adjunto pisa a otro y el nombre
+     * sigue terminando en .xml/.pdf, que es de lo que dependen el resto de los
+     * pasos. Package-private para probarlo sin levantar el contexto.
+     */
+    static String claveUnica(Map<String, byte[]> destino, String nombre, byte[] contenido) {
+        if (!destino.containsKey(nombre)) {
+            destino.put(nombre, contenido);
+            return nombre;
+        }
+        int punto = nombre.lastIndexOf('.');
+        String base = punto > 0 ? nombre.substring(0, punto) : nombre;
+        String extension = punto > 0 ? nombre.substring(punto) : "";
+        for (int i = 2; ; i++) {
+            String candidata = base + "-" + i + extension;
+            if (!destino.containsKey(candidata)) {
+                destino.put(candidata, contenido);
+                return candidata;
             }
         }
     }
